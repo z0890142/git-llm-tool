@@ -7,6 +7,7 @@ from git_llm_tool import __version__
 from git_llm_tool.core.config import ConfigLoader, get_config
 from git_llm_tool.core.exceptions import ConfigError
 from git_llm_tool.commands.commit_cmd import execute_commit
+from git_llm_tool.commands.changelog_cmd import execute_changelog
 
 
 @click.group()
@@ -61,13 +62,8 @@ def commit(ctx, apply, model, language):
 @click.pass_context
 def changelog(ctx, from_ref, to_ref, output, force):
     """Generate changelog from git history."""
-    click.echo("📋 Generating changelog...")
-
-    # This will be implemented in subsequent tasks
-    if output:
-        click.echo(f"📄 Changelog saved to {output}")
-    else:
-        click.echo("📄 Changelog output to stdout")
+    verbose = ctx.obj.get('verbose', False) if ctx.obj else False
+    execute_changelog(from_ref=from_ref, to_ref=to_ref, output=output, force=force, verbose=verbose)
 
 
 @main.group()

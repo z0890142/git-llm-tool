@@ -18,6 +18,7 @@ AI-powered git commit message and changelog generator using LLM APIs.
 - [Supported Models](#supported-models)
 - [Development](#development)
 - [Contributing](#contributing)
+- [Git Custom Command Integration](#git-custom-command-integration)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
@@ -41,7 +42,7 @@ pip install git-llm-tool
 
 ### From Source
 ```bash
-git clone https://github.com/z0890142/git-llm-tool.git
+git clone https://github.com/your-username/git-llm-tool.git
 cd git-llm-tool
 poetry install
 ```
@@ -302,7 +303,7 @@ jira:
 ### Setup Development Environment
 ```bash
 # Clone repository
-git clone https://github.com/z0890142/git-llm-tool.git
+git clone https://github.com/your-username/git-llm-tool.git
 cd git-llm-tool
 
 # Install dependencies
@@ -355,6 +356,101 @@ poetry publish
 7. Commit your changes (`git-llm commit` 😉)
 8. Push to the branch (`git push origin feature/amazing-feature`)
 9. Open a Pull Request
+
+## Git Custom Command Integration
+
+You can integrate git-llm as a native git subcommand, allowing you to use `git llm` instead of `git-llm`.
+
+### Method 1: Git Aliases (Recommended)
+
+Add aliases to your git configuration:
+
+```bash
+# Add git aliases for all commands
+git config --global alias.llm-commit '!git-llm commit'
+git config --global alias.llm-changelog '!git-llm changelog'
+git config --global alias.llm-config '!git-llm config'
+
+# Or create a general alias
+git config --global alias.llm '!git-llm'
+```
+
+Now you can use:
+```bash
+git llm commit              # Instead of git-llm commit
+git llm changelog           # Instead of git-llm changelog
+git llm config get          # Instead of git-llm config get
+
+# Or with specific aliases
+git llm-commit              # Direct alias to git-llm commit
+git llm-changelog           # Direct alias to git-llm changelog
+```
+
+### Method 2: Shell Aliases
+
+Add to your shell profile (`.bashrc`, `.zshrc`, etc.):
+
+```bash
+# Simple alias
+alias gllm='git-llm'
+
+# Or git-style aliases
+alias gllmc='git-llm commit'
+alias gllmcl='git-llm changelog'
+alias gllmcfg='git-llm config'
+```
+
+Usage:
+```bash
+gllm commit                 # git-llm commit
+gllmc                       # git-llm commit
+gllmcl                      # git-llm changelog
+```
+
+### Method 3: Custom Git Script
+
+Create a custom git command script:
+
+```bash
+# Create git-llm script in your PATH
+sudo tee /usr/local/bin/git-llm > /dev/null << 'EOF'
+#!/bin/bash
+# Git-LLM integration script
+exec git-llm "$@"
+EOF
+
+sudo chmod +x /usr/local/bin/git-llm
+```
+
+Now you can use:
+```bash
+git llm commit              # Calls git-llm commit
+git llm changelog           # Calls git-llm changelog
+```
+
+### Recommended Git Workflow
+
+With git aliases configured, your workflow becomes:
+
+```bash
+# Make changes
+echo "console.log('Hello');" > app.js
+
+# Stage changes
+git add .
+
+# Generate AI commit message (opens editor)
+git llm commit
+
+# Or commit directly
+git llm commit --apply
+
+# Generate changelog
+git llm changelog
+
+# Check configuration
+git llm config get
+```
 
 ## Requirements
 
