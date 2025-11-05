@@ -22,7 +22,7 @@ class LlmConfig:
 class JiraConfig:
     """Jira integration configuration."""
     enabled: bool = False
-    branch_regex: Optional[str] = None
+    ticket_pattern: Optional[str] = None  # Jira ticket regex pattern
 
 
 @dataclass
@@ -161,7 +161,7 @@ class ConfigLoader:
         jira_data = config_data.get("jira", {})
         jira_config = JiraConfig(
             enabled=jira_data.get("enabled", False),
-            branch_regex=jira_data.get("branch_regex")
+            ticket_pattern=jira_data.get("ticket_pattern")
         )
 
         # Create Editor config
@@ -191,7 +191,7 @@ class ConfigLoader:
             },
             "jira": {
                 "enabled": self._config.jira.enabled,
-                "branch_regex": self._config.jira.branch_regex
+                "ticket_pattern": self._config.jira.ticket_pattern
             },
             "editor": {
                 "preferred_editor": self._config.editor.preferred_editor
@@ -205,8 +205,8 @@ class ConfigLoader:
             del config_dict["llm"]["azure_openai"]
 
         # Remove None values from jira config
-        if config_dict["jira"]["branch_regex"] is None:
-            del config_dict["jira"]["branch_regex"]
+        if config_dict["jira"]["ticket_pattern"] is None:
+            del config_dict["jira"]["ticket_pattern"]
 
         # Remove None values from editor config
         if config_dict["editor"]["preferred_editor"] is None:
@@ -242,9 +242,9 @@ class ConfigLoader:
         # Handle jira.enabled
         elif keys[0] == "jira" and keys[1] == "enabled":
             self._config.jira.enabled = value.lower() in ("true", "1", "yes", "on")
-        # Handle jira.branch_regex
-        elif keys[0] == "jira" and keys[1] == "branch_regex":
-            self._config.jira.branch_regex = value
+        # Handle jira.ticket_pattern
+        elif keys[0] == "jira" and keys[1] == "ticket_pattern":
+            self._config.jira.ticket_pattern = value
         # Handle editor.preferred_editor
         elif keys[0] == "editor" and keys[1] == "preferred_editor":
             self._config.editor.preferred_editor = value
@@ -273,9 +273,9 @@ class ConfigLoader:
         # Handle jira.enabled
         elif keys[0] == "jira" and keys[1] == "enabled":
             return self._config.jira.enabled
-        # Handle jira.branch_regex
-        elif keys[0] == "jira" and keys[1] == "branch_regex":
-            return self._config.jira.branch_regex
+        # Handle jira.ticket_pattern
+        elif keys[0] == "jira" and keys[1] == "ticket_pattern":
+            return self._config.jira.ticket_pattern
         # Handle editor.preferred_editor
         elif keys[0] == "editor" and keys[1] == "preferred_editor":
             return self._config.editor.preferred_editor

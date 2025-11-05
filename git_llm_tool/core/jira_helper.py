@@ -57,27 +57,38 @@ class JiraHelper:
         Returns:
             Jira ticket number if found, None otherwise
         """
-        if not self.config.jira.branch_regex:
-            return None
-
         try:
             branch_name = self.git_helper.get_current_branch()
-            pattern = self.config.jira.branch_regex
 
-            match = re.search(pattern, branch_name)
-            if match:
-                # If regex has capture groups, use the first one
-                if match.groups():
-                    return match.group(1)
-                else:
-                    # If no capture groups, use the whole match
-                    return match.group(0)
+            # Use ticket pattern to extract Jira ticket
+            if self.config.jira.ticket_pattern:
+                match = re.search(self.config.jira.ticket_pattern, branch_name)
+                if match:
+                    # If the pattern has capture groups, use the first one
+                    if match.groups():
+                        return match.group(1)
+                    else:
+                        # If no capture groups, use the whole match
+                        return match.group(0)
 
         except Exception:
             # Ignore any errors in regex matching or git operations
             pass
 
         return None
+
+    def _is_jira_ticket_format(self, text: str) -> bool:
+        """Check if text matches typical Jira ticket format.
+
+        Args:
+            text: Text to check
+
+        Returns:
+            True if text looks like a Jira ticket (e.g., PROJECT-123)
+        """
+        import re
+        # Common Jira ticket format: UPPERCASE-DIGITS
+        return bool(re.match(r'^[A-Z]+-\d+$', text))
 
     def _prompt_for_ticket(self) -> Optional[str]:
         """Interactively prompt user for Jira ticket.
@@ -158,11 +169,11 @@ class JiraHelper:
         if not self.config.jira.enabled:
             return True
 
-        # Validate regex if provided
-        if self.config.jira.branch_regex:
+        # Validate ticket pattern regex if provided
+        if self.config.jira.ticket_pattern:
             try:
-                re.compile(self.config.jira.branch_regex)
+                re.compile(self.config.jira.ticket_pattern)
             except re.error as e:
-                raise JiraError(f"Invalid branch regex pattern: {e}")
+                raise JiraError(f"Invalid ticket pattern regex: {e}")
 
         return True
