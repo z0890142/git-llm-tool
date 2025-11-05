@@ -4,6 +4,22 @@ version = "0.1.0"
 description = "AI-powered git commit message and changelog generator"
 authors = ["skyler-gogolook <skyler.lo@gogolook.com>"]
 readme = "README.md"
+license = "MIT"
+homepage = "https://github.com/z0890142/git-llm-tool"
+repository = "https://github.com/z0890142/git-llm-tool"
+documentation = "https://github.com/z0890142/git-llm-tool#readme"
+keywords = ["git", "commit", "llm", "ai", "automation", "jira", "conventional-commits"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
 packages = [{include = "git_llm_tool"}]
 
 [tool.poetry.dependencies]
