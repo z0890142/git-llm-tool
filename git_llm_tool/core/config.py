@@ -26,10 +26,17 @@ class JiraConfig:
 
 
 @dataclass
+class EditorConfig:
+    """Editor configuration settings."""
+    preferred_editor: Optional[str] = None  # e.g., "vi", "nano", "code", etc.
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     llm: LlmConfig = field(default_factory=LlmConfig)
     jira: JiraConfig = field(default_factory=JiraConfig)
+    editor: EditorConfig = field(default_factory=EditorConfig)
 
 
 class ConfigLoader:
@@ -157,7 +164,13 @@ class ConfigLoader:
             branch_regex=jira_data.get("branch_regex")
         )
 
-        return AppConfig(llm=llm_config, jira=jira_config)
+        # Create Editor config
+        editor_data = config_data.get("editor", {})
+        editor_config = EditorConfig(
+            preferred_editor=editor_data.get("preferred_editor")
+        )
+
+        return AppConfig(llm=llm_config, jira=jira_config, editor=editor_config)
 
     def save_config(self, config_path: Optional[Path] = None) -> None:
         """Save current configuration to file."""
@@ -179,6 +192,9 @@ class ConfigLoader:
             "jira": {
                 "enabled": self._config.jira.enabled,
                 "branch_regex": self._config.jira.branch_regex
+            },
+            "editor": {
+                "preferred_editor": self._config.editor.preferred_editor
             }
         }
 
@@ -191,6 +207,12 @@ class ConfigLoader:
         # Remove None values from jira config
         if config_dict["jira"]["branch_regex"] is None:
             del config_dict["jira"]["branch_regex"]
+
+        # Remove None values from editor config
+        if config_dict["editor"]["preferred_editor"] is None:
+            del config_dict["editor"]["preferred_editor"]
+        if not config_dict["editor"]:
+            del config_dict["editor"]
 
         try:
             with open(config_path, 'w', encoding='utf-8') as f:
@@ -223,6 +245,9 @@ class ConfigLoader:
         # Handle jira.branch_regex
         elif keys[0] == "jira" and keys[1] == "branch_regex":
             self._config.jira.branch_regex = value
+        # Handle editor.preferred_editor
+        elif keys[0] == "editor" and keys[1] == "preferred_editor":
+            self._config.editor.preferred_editor = value
         else:
             raise ConfigError(f"Unknown configuration key: {key_path}")
 
@@ -251,6 +276,9 @@ class ConfigLoader:
         # Handle jira.branch_regex
         elif keys[0] == "jira" and keys[1] == "branch_regex":
             return self._config.jira.branch_regex
+        # Handle editor.preferred_editor
+        elif keys[0] == "editor" and keys[1] == "preferred_editor":
+            return self._config.editor.preferred_editor
         else:
             raise ConfigError(f"Unknown configuration key: {key_path}")
 

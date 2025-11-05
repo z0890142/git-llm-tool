@@ -110,7 +110,7 @@ def execute_commit(
             # Open editor for review
             click.echo("📝 Opening editor for review...")
             try:
-                committed = git_helper.open_commit_editor(commit_message)
+                committed = git_helper.open_commit_editor(commit_message, config)
                 if committed:
                     click.echo("✅ Commit created successfully!")
                 else:

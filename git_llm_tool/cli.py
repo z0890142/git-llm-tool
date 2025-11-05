@@ -129,6 +129,9 @@ def get(key):
             if config.jira.branch_regex:
                 click.echo(f"  jira.branch_regex = {config.jira.branch_regex}")
 
+            if config.editor.preferred_editor:
+                click.echo(f"  editor.preferred_editor = {config.editor.preferred_editor}")
+
     except ConfigError as e:
         click.echo(f"❌ Configuration error: {e}", err=True)
     except Exception as e:

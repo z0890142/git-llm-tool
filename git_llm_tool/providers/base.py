@@ -6,6 +6,77 @@ from typing import Dict, Any, Optional
 from git_llm_tool.core.config import AppConfig
 
 
+class PromptTemplates:
+    """Centralized prompt templates for better code readability."""
+
+    # Base prompt with conventional commit types
+    BASE_COMMIT_PROMPT = """Based on the following git diff, generate a concise commit message in {language}.
+
+**Conventional Commit types**:
+- feat: new feature
+- fix: bug fix
+- docs: documentation changes
+- style: formatting, missing semicolons, etc
+- refactor: code restructuring without changing functionality
+- test: adding or modifying tests
+- chore: maintenance tasks
+
+Git diff:
+```
+{diff}
+```"""
+
+    # Format for commits without Jira tickets
+    NO_JIRA_FORMAT = """
+Generate the commit message in **bulleted format**:
+- feat: description of new features
+- fix: description of bug fixes
+- docs: description of documentation changes
+(include only the types that apply to your changes)
+
+Example format:
+- feat: add user authentication endpoints
+- fix: resolve login validation issue"""
+
+    # Format for commits with Jira tickets
+    JIRA_FORMAT = """
+**Jira ticket found**: {jira_ticket}
+
+Generate the commit message in this **exact format**:
+{jira_ticket} <summary> #time <time_spent>
+- feat: detailed description of new features
+- fix: detailed description of bug fixes
+- docs: detailed description of documentation changes
+(include only the types that apply to your changes)
+
+Where:
+- First line: {jira_ticket} <brief_summary> #time <time_spent>
+- Following lines: List each change type with "- type: description" format
+- Only include the conventional commit types that actually apply to the changes"""
+
+    # Time tracking instructions
+    EXACT_TIME_INSTRUCTION = """
+**Use exact time**: #time {work_hours}
+
+Example format:
+{jira_ticket} Implement user authentication system #time {work_hours}
+- feat: add login and registration endpoints
+- feat: implement JWT token validation
+- docs: update API documentation"""
+
+    ESTIMATE_TIME_INSTRUCTION = """
+**Estimate appropriate time** (e.g., #time 2h, #time 45m, #time 30m)
+
+Example format:
+{jira_ticket} Implement user authentication system #time 2h
+- feat: add login and registration endpoints
+- feat: implement JWT token validation
+- docs: update API documentation"""
+
+    # Final instruction
+    FINAL_INSTRUCTION = "\n\nGenerate ONLY the commit message in the specified format, no additional text or explanation."
+
+
 class LlmProvider(ABC):
     """Abstract base class for LLM providers."""
 
@@ -61,63 +132,35 @@ class LlmProvider(ABC):
     ) -> str:
         """Build prompt for commit message generation."""
 
-        # If we have Jira ticket, use Jira format, otherwise use conventional commit format
+        # Prepare all template variables
+        template_vars = {
+            'language': self.config.llm.language,
+            'diff': diff,
+            'jira_ticket': jira_ticket or '',
+            'work_hours': work_hours or ''
+        }
+
+        # Build prompt components
+        prompt_parts = [PromptTemplates.BASE_COMMIT_PROMPT]
+
+        # Add format-specific instructions
         if jira_ticket:
-            base_prompt = f"""Based on the following git diff, generate a concise commit message in {self.config.llm.language} using the JIRA format:
-1. Use **JIRA format**:
-    <ISSUE_KEY> <summary_comment> #time <time_spent>
+            prompt_parts.append(PromptTemplates.JIRA_FORMAT)
 
-    Where:
-        - <ISSUE_KEY>: {jira_ticket}
-        - <summary_comment>: concise description
-        - #time: time tracking (e.g., #time 2h, #time 45m)
-
-2. Also include **Conventional Commit format**:
-    type: description where type can be:
-    - feat: new feature
-    - fix: bug fix
-    - docs: documentation changes
-    - style: formatting, missing semicolons, etc
-    - refactor: code restructuring without changing functionality
-    - test: adding or modifying tests
-    - chore: maintenance tasks
-
-Git diff:
-```
-{diff}
-```
-
-JIRA ticket: {jira_ticket}"""
-
+            # Add time tracking instructions
             if work_hours:
-                base_prompt += f"\nTime spent: {work_hours}"
-                base_prompt += f"\n\nGenerate ONLY the commit message in this exact format: {jira_ticket} <description> #time {work_hours}"
+                prompt_parts.append(PromptTemplates.EXACT_TIME_INSTRUCTION)
             else:
-                base_prompt += (
-                    "\nTime spent: (estimate appropriate time based on the changes)"
-                )
-                base_prompt += f"\n\nGenerate ONLY the commit message in this format: {jira_ticket} <description> #time <estimated_time>"
+                prompt_parts.append(PromptTemplates.ESTIMATE_TIME_INSTRUCTION)
         else:
-            # Use conventional commit format when no Jira ticket
-            base_prompt = f"""Based on the following git diff, generate a concise and descriptive commit message in {self.config.llm.language}.
+            prompt_parts.append(PromptTemplates.NO_JIRA_FORMAT)
 
-Follow conventional commit format (type: description) where type can be:
-- feat: new feature
-- fix: bug fix
-- docs: documentation changes
-- style: formatting, missing semicolons, etc
-- refactor: code restructuring without changing functionality
-- test: adding or modifying tests
-- chore: maintenance tasks
+        # Add final instruction
+        prompt_parts.append(PromptTemplates.FINAL_INSTRUCTION)
 
-Git diff:
-```
-{diff}
-```
-
-Generate ONLY the commit message, no additional text or explanation."""
-
-        return base_prompt
+        # Combine and format all parts at once
+        full_template = ''.join(prompt_parts)
+        return full_template.format(**template_vars)
 
     def _build_changelog_prompt(self, commit_messages: list[str]) -> str:
         """Build prompt for changelog generation."""

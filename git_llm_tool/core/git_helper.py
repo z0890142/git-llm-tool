@@ -125,11 +125,12 @@ class GitHelper:
                 raise GitError("No staged changes to commit")
             raise
 
-    def open_commit_editor(self, message: str) -> bool:
+    def open_commit_editor(self, message: str, config=None) -> bool:
         """Open commit message in editor for review.
 
         Args:
             message: Initial commit message
+            config: Optional AppConfig instance for preferred editor
 
         Returns:
             True if commit was made, False if cancelled
@@ -143,8 +144,8 @@ class GitHelper:
             temp_file_path = temp_file.name
 
         try:
-            # Get git editor
-            editor = self._get_git_editor()
+            # Get git editor (with config support)
+            editor = self._get_git_editor(config)
 
             # Open editor
             result = subprocess.run([editor, temp_file_path])
@@ -171,8 +172,11 @@ class GitHelper:
             except OSError:
                 pass
 
-    def _get_git_editor(self) -> str:
+    def _get_git_editor(self, config=None) -> str:
         """Get the configured git editor.
+
+        Args:
+            config: Optional AppConfig instance to get preferred editor
 
         Returns:
             Editor command
@@ -180,7 +184,11 @@ class GitHelper:
         Raises:
             GitError: If no editor is configured
         """
-        # Try git config
+        # First priority: app config preferred editor
+        if config and config.editor.preferred_editor:
+            return config.editor.preferred_editor
+
+        # Second priority: git config
         try:
             editor = self._run_git_command(["git", "config", "--get", "core.editor"])
             if editor:
@@ -188,13 +196,13 @@ class GitHelper:
         except GitError:
             pass
 
-        # Try environment variables
+        # Third priority: environment variables
         for env_var in ["GIT_EDITOR", "VISUAL", "EDITOR"]:
             editor = os.environ.get(env_var)
             if editor:
                 return editor
 
-        # Default editors by platform
+        # Fourth priority: default editors by platform
         if os.name == 'nt':
             # Windows
             return "notepad"
@@ -208,7 +216,7 @@ class GitHelper:
                 except (subprocess.CalledProcessError, FileNotFoundError):
                     continue
 
-        raise GitError("No suitable editor found. Please set core.editor in git config")
+        raise GitError("No suitable editor found. Please set core.editor in git config or editor.preferred_editor in git-llm config")
 
     def get_repository_info(self) -> dict:
         """Get basic repository information.
