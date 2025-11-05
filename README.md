@@ -42,7 +42,7 @@ pip install git-llm-tool
 
 ### From Source
 ```bash
-git clone https://github.com/your-username/git-llm-tool.git
+git clone https://github.com/z0890142/git-llm-tool.git
 cd git-llm-tool
 poetry install
 ```
@@ -303,7 +303,7 @@ jira:
 ### Setup Development Environment
 ```bash
 # Clone repository
-git clone https://github.com/your-username/git-llm-tool.git
+git clone https://github.com/z0890142/git-llm-tool.git
 cd git-llm-tool
 
 # Install dependencies
