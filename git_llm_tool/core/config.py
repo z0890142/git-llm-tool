@@ -1,0 +1,270 @@
+"""Configuration management for git-llm-tool."""
+
+import os
+import yaml
+from pathlib import Path
+from typing import Dict, Any, Optional
+from dataclasses import dataclass, field
+
+from git_llm_tool.core.exceptions import ConfigError
+
+
+@dataclass
+class LlmConfig:
+    """LLM configuration settings."""
+    default_model: str = "gpt-4o"
+    language: str = "en"
+    api_keys: Dict[str, str] = field(default_factory=dict)
+    azure_openai: Dict[str, str] = field(default_factory=dict)  # endpoint, api_version, deployment_name
+
+
+@dataclass
+class JiraConfig:
+    """Jira integration configuration."""
+    enabled: bool = False
+    branch_regex: Optional[str] = None
+
+
+@dataclass
+class AppConfig:
+    """Main application configuration."""
+    llm: LlmConfig = field(default_factory=LlmConfig)
+    jira: JiraConfig = field(default_factory=JiraConfig)
+
+
+class ConfigLoader:
+    """Singleton configuration loader with hierarchical configuration support."""
+
+    _instance = None
+    _config = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if not getattr(self, '_initialized', False):
+            self._config = self._load_config()
+            self._initialized = True
+
+    @property
+    def config(self) -> AppConfig:
+        """Get the loaded configuration."""
+        return self._config
+
+    def _load_config(self) -> AppConfig:
+        """Load configuration from multiple sources in hierarchical order."""
+        config_data = {}
+
+        # 1. Load global config
+        global_config_path = Path.home() / ".git-llm-tool" / "config.yaml"
+        if global_config_path.exists():
+            config_data.update(self._load_yaml_file(global_config_path))
+
+        # 2. Load project config (override global)
+        project_config_path = Path(".git-llm-tool.yaml")
+        if project_config_path.exists():
+            project_config = self._load_yaml_file(project_config_path)
+            config_data = self._merge_configs(config_data, project_config)
+
+        # 3. Load environment variables (override file configs)
+        env_config = self._load_env_config()
+        config_data = self._merge_configs(config_data, env_config)
+
+        return self._create_app_config(config_data)
+
+    def _load_yaml_file(self, file_path: Path) -> Dict[str, Any]:
+        """Load YAML configuration file."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+                return data if data is not None else {}
+        except yaml.YAMLError as e:
+            raise ConfigError(f"Invalid YAML in {file_path}: {e}")
+        except Exception as e:
+            raise ConfigError(f"Failed to read config file {file_path}: {e}")
+
+    def _load_env_config(self) -> Dict[str, Any]:
+        """Load configuration from environment variables."""
+        config = {}
+
+        # API keys from environment
+        api_keys = {}
+        if openai_key := os.getenv("OPENAI_API_KEY"):
+            api_keys["openai"] = openai_key
+        if anthropic_key := os.getenv("ANTHROPIC_API_KEY"):
+            api_keys["anthropic"] = anthropic_key
+        if google_key := os.getenv("GOOGLE_API_KEY"):
+            api_keys["google"] = google_key
+
+        # Azure OpenAI configuration from environment
+        azure_openai = {}
+        if azure_endpoint := os.getenv("AZURE_OPENAI_ENDPOINT"):
+            azure_openai["endpoint"] = azure_endpoint
+        if azure_key := os.getenv("AZURE_OPENAI_API_KEY"):
+            api_keys["azure_openai"] = azure_key
+        if azure_version := os.getenv("AZURE_OPENAI_API_VERSION"):
+            azure_openai["api_version"] = azure_version
+        if azure_deployment := os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"):
+            azure_openai["deployment_name"] = azure_deployment
+
+        # Set up LLM config
+        if api_keys or azure_openai:
+            config["llm"] = {}
+            if api_keys:
+                config["llm"]["api_keys"] = api_keys
+            if azure_openai:
+                config["llm"]["azure_openai"] = azure_openai
+
+        # Other environment variables
+        if model := os.getenv("GIT_LLM_MODEL"):
+            config.setdefault("llm", {})["default_model"] = model
+
+        if language := os.getenv("GIT_LLM_LANGUAGE"):
+            config.setdefault("llm", {})["language"] = language
+
+        return config
+
+    def _merge_configs(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge two configuration dictionaries recursively."""
+        result = base.copy()
+
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._merge_configs(result[key], value)
+            else:
+                result[key] = value
+
+        return result
+
+    def _create_app_config(self, config_data: Dict[str, Any]) -> AppConfig:
+        """Create AppConfig instance from configuration data."""
+        # Create LLM config
+        llm_data = config_data.get("llm", {})
+        llm_config = LlmConfig(
+            default_model=llm_data.get("default_model", "gpt-4o"),
+            language=llm_data.get("language", "en"),
+            api_keys=llm_data.get("api_keys", {}),
+            azure_openai=llm_data.get("azure_openai", {})
+        )
+
+        # Create Jira config
+        jira_data = config_data.get("jira", {})
+        jira_config = JiraConfig(
+            enabled=jira_data.get("enabled", False),
+            branch_regex=jira_data.get("branch_regex")
+        )
+
+        return AppConfig(llm=llm_config, jira=jira_config)
+
+    def save_config(self, config_path: Optional[Path] = None) -> None:
+        """Save current configuration to file."""
+        if config_path is None:
+            # Save to global config by default
+            config_path = Path.home() / ".git-llm-tool" / "config.yaml"
+
+        # Ensure directory exists
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Convert config to dict
+        config_dict = {
+            "llm": {
+                "default_model": self._config.llm.default_model,
+                "language": self._config.llm.language,
+                "api_keys": self._config.llm.api_keys,
+                "azure_openai": self._config.llm.azure_openai
+            },
+            "jira": {
+                "enabled": self._config.jira.enabled,
+                "branch_regex": self._config.jira.branch_regex
+            }
+        }
+
+        # Remove empty sections to keep config clean
+        if not config_dict["llm"]["api_keys"]:
+            del config_dict["llm"]["api_keys"]
+        if not config_dict["llm"]["azure_openai"]:
+            del config_dict["llm"]["azure_openai"]
+
+        # Remove None values from jira config
+        if config_dict["jira"]["branch_regex"] is None:
+            del config_dict["jira"]["branch_regex"]
+
+        try:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_dict, f, default_flow_style=False, indent=2)
+        except Exception as e:
+            raise ConfigError(f"Failed to save config to {config_path}: {e}")
+
+    def set_value(self, key_path: str, value: str) -> None:
+        """Set a configuration value using dot notation (e.g., 'llm.default_model')."""
+        keys = key_path.split('.')
+
+        if len(keys) < 2:
+            raise ConfigError(f"Invalid key path: {key_path}")
+
+        # Handle llm.default_model
+        if keys[0] == "llm" and keys[1] == "default_model":
+            self._config.llm.default_model = value
+        # Handle llm.language
+        elif keys[0] == "llm" and keys[1] == "language":
+            self._config.llm.language = value
+        # Handle llm.api_keys.*
+        elif keys[0] == "llm" and keys[1] == "api_keys" and len(keys) == 3:
+            self._config.llm.api_keys[keys[2]] = value
+        # Handle llm.azure_openai.*
+        elif keys[0] == "llm" and keys[1] == "azure_openai" and len(keys) == 3:
+            self._config.llm.azure_openai[keys[2]] = value
+        # Handle jira.enabled
+        elif keys[0] == "jira" and keys[1] == "enabled":
+            self._config.jira.enabled = value.lower() in ("true", "1", "yes", "on")
+        # Handle jira.branch_regex
+        elif keys[0] == "jira" and keys[1] == "branch_regex":
+            self._config.jira.branch_regex = value
+        else:
+            raise ConfigError(f"Unknown configuration key: {key_path}")
+
+    def get_value(self, key_path: str) -> Any:
+        """Get a configuration value using dot notation."""
+        keys = key_path.split('.')
+
+        if len(keys) < 2:
+            raise ConfigError(f"Invalid key path: {key_path}")
+
+        # Handle llm.default_model
+        if keys[0] == "llm" and keys[1] == "default_model":
+            return self._config.llm.default_model
+        # Handle llm.language
+        elif keys[0] == "llm" and keys[1] == "language":
+            return self._config.llm.language
+        # Handle llm.api_keys.*
+        elif keys[0] == "llm" and keys[1] == "api_keys" and len(keys) == 3:
+            return self._config.llm.api_keys.get(keys[2])
+        # Handle llm.azure_openai.*
+        elif keys[0] == "llm" and keys[1] == "azure_openai" and len(keys) == 3:
+            return self._config.llm.azure_openai.get(keys[2])
+        # Handle jira.enabled
+        elif keys[0] == "jira" and keys[1] == "enabled":
+            return self._config.jira.enabled
+        # Handle jira.branch_regex
+        elif keys[0] == "jira" and keys[1] == "branch_regex":
+            return self._config.jira.branch_regex
+        else:
+            raise ConfigError(f"Unknown configuration key: {key_path}")
+
+    def reload(self) -> None:
+        """Reload configuration from files."""
+        self._config = self._load_config()
+
+    @classmethod
+    def _reset_instance(cls) -> None:
+        """Reset singleton instance for testing."""
+        cls._instance = None
+        cls._config = None
+
+
+def get_config() -> AppConfig:
+    """Get the application configuration."""
+    return ConfigLoader().config
