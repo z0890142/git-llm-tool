@@ -28,13 +28,15 @@ Git diff:
 
     # Format for commits without Jira tickets
     NO_JIRA_FORMAT = """
-Generate the commit message in **bulleted format**:
+Generate the commit message in this **exact format**:
+<summary>
 - feat: description of new features
 - fix: description of bug fixes
 - docs: description of documentation changes
 (include only the types that apply to your changes)
 
 Example format:
+Implement user authentication system
 - feat: add user authentication endpoints
 - fix: resolve login validation issue"""
 
