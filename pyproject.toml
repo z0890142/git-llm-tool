@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "git-llm-tool"
-version = "0.1.5"
+version = "0.1.6"
 description = "AI-powered git commit message and changelog generator"
 authors = ["skyler-gogolook <skyler.lo@gogolook.com>"]
 readme = "README.md"

@@ -22,7 +22,9 @@ class JiraHelper:
         self.config = config
         self.git_helper = git_helper
 
-    def get_jira_context(self, verbose: bool = False) -> Tuple[Optional[str], Optional[str]]:
+    def get_jira_context(
+        self, verbose: bool = False
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Get Jira ticket and work hours context.
 
         Args:
@@ -87,8 +89,9 @@ class JiraHelper:
             True if text looks like a Jira ticket (e.g., PROJECT-123)
         """
         import re
+
         # Common Jira ticket format: UPPERCASE-DIGITS
-        return bool(re.match(r'^[A-Z]+-\d+$', text))
+        return bool(re.match(r"^[A-Z]+-\d+$", text))
 
     def _prompt_for_ticket(self) -> Optional[str]:
         """Interactively prompt user for Jira ticket.
@@ -100,15 +103,17 @@ class JiraHelper:
         ticket = click.prompt(
             "Enter Jira ticket number (or press Enter to skip)",
             default="",
-            show_default=False
+            show_default=False,
         ).strip()
 
         if not ticket:
             return None
 
         # Basic validation - should look like a Jira ticket
-        if not re.match(r'^[A-Z]+-\d+$', ticket.upper()):
-            click.echo("⚠️  Warning: Ticket format doesn't look like standard Jira format (e.g., PROJ-123)")
+        if not re.match(r"^[A-Z]+-\d+$", ticket.upper()):
+            click.echo(
+                "⚠️  Warning: Ticket format doesn't look like standard Jira format (e.g., PROJ-123)"
+            )
             if not click.confirm("Continue anyway?"):
                 return None
 
@@ -121,23 +126,73 @@ class JiraHelper:
             Work hours string or None if skipped
         """
         work_hours = click.prompt(
-            "Enter work hours (e.g., '1h 30m', '2h', '45m') or press Enter to skip",
+            "Enter work hours (e.g., '1h 30m', '2h', '45m', '1d 2h', '1w 3d 4h 30m') or press Enter to skip",
             default="",
-            show_default=False
+            show_default=False,
         ).strip()
 
         if not work_hours:
             return None
 
         # Basic validation for work hours format
-        if not re.match(r'^(\d+h\s*)?(\d+m)?$', work_hours.lower().replace(' ', '')):
-            click.echo("⚠️  Warning: Work hours format should be like '1h 30m', '2h', or '45m'")
+        if not re.match(
+            r"^(\d+w\s*)?(\d+d\s*)?(\d+h\s*)?(\d+m)?$",
+            work_hours.lower().replace(" ", ""),
+        ):
+            click.echo(
+                "⚠️  Warning: Work hours format should be like '1h 30m', '2h', '45m', '1d 2h', or '1w 2d 3h 30m'"
+            )
             if not click.confirm("Continue anyway?"):
                 return None
 
-        return work_hours
+        # Normalize the work hours format
+        normalized_hours = self._normalize_work_hours(work_hours)
+        return normalized_hours
 
-    def format_jira_info(self, jira_ticket: Optional[str], work_hours: Optional[str]) -> str:
+    def _normalize_work_hours(self, work_hours: str) -> str:
+        """Normalize work hours to standard format: 0w 0d 0h 0m.
+
+        Args:
+            work_hours: Input work hours string (e.g., '1h 30m', '2h', '45m')
+
+        Returns:
+            Normalized work hours string in format '0w 0d 0h 0m'
+        """
+        # Initialize all time units to 0
+        weeks = 0
+        days = 0
+        hours = 0
+        minutes = 0
+
+        # Clean the input and make it lowercase
+        clean_input = work_hours.lower().replace(" ", "")
+
+        # Extract weeks
+        week_match = re.search(r"(\d+)w", clean_input)
+        if week_match:
+            weeks = int(week_match.group(1))
+
+        # Extract days
+        day_match = re.search(r"(\d+)d", clean_input)
+        if day_match:
+            days = int(day_match.group(1))
+
+        # Extract hours
+        hour_match = re.search(r"(\d+)h", clean_input)
+        if hour_match:
+            hours = int(hour_match.group(1))
+
+        # Extract minutes
+        minute_match = re.search(r"(\d+)m", clean_input)
+        if minute_match:
+            minutes = int(minute_match.group(1))
+
+        # Return in standard format
+        return f"{weeks}w {days}d {hours}h {minutes}m"
+
+    def format_jira_info(
+        self, jira_ticket: Optional[str], work_hours: Optional[str]
+    ) -> str:
         """Format Jira information for display.
 
         Args:

@@ -67,10 +67,9 @@ Example format:
 - docs: update API documentation"""
 
     ESTIMATE_TIME_INSTRUCTION = """
-**Estimate appropriate time** (e.g., #time 2h, #time 45m, #time 30m)
 
 Example format:
-{jira_ticket} Implement user authentication system #time 2h
+{jira_ticket} Implement user authentication system
 - feat: add login and registration endpoints
 - feat: implement JWT token validation
 - docs: update API documentation"""
@@ -136,10 +135,10 @@ class LlmProvider(ABC):
 
         # Prepare all template variables
         template_vars = {
-            'language': self.config.llm.language,
-            'diff': diff,
-            'jira_ticket': jira_ticket or '',
-            'work_hours': work_hours or ''
+            "language": self.config.llm.language,
+            "diff": diff,
+            "jira_ticket": jira_ticket or "",
+            "work_hours": work_hours or "",
         }
 
         # Build prompt components
@@ -161,7 +160,7 @@ class LlmProvider(ABC):
         prompt_parts.append(PromptTemplates.FINAL_INSTRUCTION)
 
         # Combine and format all parts at once
-        full_template = ''.join(prompt_parts)
+        full_template = "".join(prompt_parts)
         return full_template.format(**template_vars)
 
     def _build_changelog_prompt(self, commit_messages: list[str]) -> str:
