@@ -17,8 +17,7 @@ class LlmConfig:
     api_keys: Dict[str, str] = field(default_factory=dict)
     azure_openai: Dict[str, str] = field(default_factory=dict)  # endpoint, api_version, deployment_name
 
-    # LangChain and processing configuration
-    use_langchain: bool = True  # Enable LangChain providers by default
+    # Processing configuration
     chunking_threshold: int = 12000  # Token threshold to trigger chunking + parallel processing
 
     # Ollama configuration for hybrid processing
@@ -177,8 +176,7 @@ class ConfigLoader:
             language=llm_data.get("language", "en"),
             api_keys=llm_data.get("api_keys", {}),
             azure_openai=llm_data.get("azure_openai", {}),
-            # LangChain and chunking settings
-            use_langchain=llm_data.get("use_langchain", True),
+            # Processing settings
             chunking_threshold=llm_data.get("chunking_threshold", 12000),
             # Ollama settings
             use_ollama_for_chunks=llm_data.get("use_ollama_for_chunks", False),
@@ -217,7 +215,6 @@ class ConfigLoader:
                 "language": self._config.llm.language,
                 "api_keys": self._config.llm.api_keys,
                 "azure_openai": self._config.llm.azure_openai,
-                "use_langchain": self._config.llm.use_langchain,
                 "chunking_threshold": self._config.llm.chunking_threshold,
                 "use_ollama_for_chunks": self._config.llm.use_ollama_for_chunks,
                 "ollama_model": self._config.llm.ollama_model,

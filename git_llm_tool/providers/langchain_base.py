@@ -192,11 +192,15 @@ class LangChainProvider(LlmProvider):
             return self.llm.invoke(prompt, **kwargs)
 
         try:
-            # Use rate limiter if available
-            if self.rate_limiter:
-                response = self.rate_limiter.retry_with_backoff(_make_llm_call)
-            else:
-                response = _make_llm_call()
+            # Show progress for simple processing too
+            with Halo(text="🤖 Generating commit message...", spinner="dots") as spinner:
+                # Use rate limiter if available
+                if self.rate_limiter:
+                    response = self.rate_limiter.retry_with_backoff(_make_llm_call)
+                else:
+                    response = _make_llm_call()
+
+                spinner.succeed("✅ Commit message generated successfully")
 
             # Handle different response types
             if hasattr(response, 'content'):

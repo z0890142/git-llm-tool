@@ -4,16 +4,12 @@ from git_llm_tool.core.config import AppConfig
 from git_llm_tool.core.exceptions import ApiError
 from git_llm_tool.providers.base import LlmProvider
 
-# Traditional providers
-from git_llm_tool.providers.openai import OpenAiProvider
-from git_llm_tool.providers.azure_openai import AzureOpenAiProvider
-from git_llm_tool.providers.anthropic import AnthropicProvider
-from git_llm_tool.providers.gemini import GeminiProvider
-
-# LangChain providers
+# LangChain providers (now the only supported providers)
 from git_llm_tool.providers.openai_langchain import OpenAiLangChainProvider
 from git_llm_tool.providers.anthropic_langchain import AnthropicLangChainProvider
 from git_llm_tool.providers.azure_openai_langchain import AzureOpenAiLangChainProvider
+from git_llm_tool.providers.ollama_langchain import OllamaLangChainProvider
+from git_llm_tool.providers.gemini_langchain import GeminiLangChainProvider
 
 
 def get_provider(config: AppConfig) -> LlmProvider:
@@ -23,77 +19,59 @@ def get_provider(config: AppConfig) -> LlmProvider:
         config: Application configuration
 
     Returns:
-        Initialized LLM provider (LangChain-based if enabled, traditional otherwise)
+        Initialized LLM provider (LangChain-based only)
 
     Raises:
         ApiError: If no suitable provider is found or API key is missing
     """
     model = config.llm.default_model.lower()
-    use_langchain = config.llm.use_langchain
 
     # Check if Azure OpenAI is configured (highest priority for OpenAI-compatible models)
     if config.llm.azure_openai and config.llm.azure_openai.get("endpoint"):
         if model.startswith(("gpt-", "o1-")) or "azure" in model:
             if "azure_openai" not in config.llm.api_keys:
                 raise ApiError("Azure OpenAI API key required for Azure OpenAI models")
-
-            if use_langchain:
-                return AzureOpenAiLangChainProvider(config)
-            else:
-                return AzureOpenAiProvider(config)
+            return AzureOpenAiLangChainProvider(config)
 
     # OpenAI models (regular OpenAI API)
     if model.startswith(("gpt-", "o1-")):
         if "openai" not in config.llm.api_keys:
             raise ApiError("OpenAI API key required for GPT models")
-
-        if use_langchain:
-            return OpenAiLangChainProvider(config)
-        else:
-            return OpenAiProvider(config)
+        return OpenAiLangChainProvider(config)
 
     # Anthropic models
     elif model.startswith("claude-"):
         if "anthropic" not in config.llm.api_keys:
             raise ApiError("Anthropic API key required for Claude models")
+        return AnthropicLangChainProvider(config)
 
-        if use_langchain:
-            return AnthropicLangChainProvider(config)
-        else:
-            return AnthropicProvider(config)
-
-    # Google models (using traditional provider for now)
+    # Google Gemini models
     elif model.startswith("gemini-"):
         if "google" not in config.llm.api_keys:
             raise ApiError("Google API key required for Gemini models")
-        return GeminiProvider(config)
+        return GeminiLangChainProvider(config)
+
+    # Ollama models (local)
+    elif model.startswith(("llama", "codellama", "mistral", "qwen", "phi")):
+        return OllamaLangChainProvider(config)
 
     # Fallback logic - try providers in order of preference
     else:
         # Try Azure OpenAI first if configured
         if config.llm.azure_openai and config.llm.azure_openai.get("endpoint") and "azure_openai" in config.llm.api_keys:
-            if use_langchain:
-                return AzureOpenAiLangChainProvider(config)
-            else:
-                return AzureOpenAiProvider(config)
+            return AzureOpenAiLangChainProvider(config)
 
         # Try OpenAI second (most common)
         elif "openai" in config.llm.api_keys:
-            if use_langchain:
-                return OpenAiLangChainProvider(config)
-            else:
-                return OpenAiProvider(config)
+            return OpenAiLangChainProvider(config)
 
         # Try Anthropic third
         elif "anthropic" in config.llm.api_keys:
-            if use_langchain:
-                return AnthropicLangChainProvider(config)
-            else:
-                return AnthropicProvider(config)
+            return AnthropicLangChainProvider(config)
 
-        # Try Google last
+        # Try Google fourth
         elif "google" in config.llm.api_keys:
-            return GeminiProvider(config)
+            return GeminiLangChainProvider(config)
 
         # No API keys available
         else:
@@ -102,5 +80,6 @@ def get_provider(config: AppConfig) -> LlmProvider:
                 "  git-llm config set llm.api_keys.openai sk-your-key\n"
                 "  git-llm config set llm.api_keys.azure_openai your-azure-key\n"
                 "  git-llm config set llm.api_keys.anthropic sk-ant-your-key\n"
-                "  git-llm config set llm.api_keys.google your-google-key"
+                "  git-llm config set llm.api_keys.google your-google-key\n"
+                "Or use Ollama for local processing (no API key needed)"
             )

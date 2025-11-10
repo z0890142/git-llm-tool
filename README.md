@@ -12,6 +12,7 @@ AI-powered git commit message and changelog generator using LLM APIs.
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
+- [Advanced Features](#advanced-features)
 - [CLI Commands Reference](#cli-commands-reference)
 - [Environment Variables](#environment-variables)
 - [Usage Examples](#usage-examples)
@@ -26,12 +27,15 @@ AI-powered git commit message and changelog generator using LLM APIs.
 
 - 🤖 **Smart Commit Messages**: Automatically generate commit messages from git diff using AI
 - 📝 **Changelog Generation**: Generate structured changelogs from git history
-- 🔧 **Multiple LLM Providers**: Support for OpenAI, Anthropic Claude, Google Gemini, and Azure OpenAI
+- 🔧 **Multiple LLM Providers**: Support for OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, and Ollama
+- 🚀 **Intelligent Chunking**: Automatic diff splitting with parallel processing for large changes
+- 🔄 **Hybrid Processing**: Use local Ollama for chunk processing + cloud LLM for final quality
+- 📊 **Progress Indicators**: Beautiful progress bars with Halo for long-running operations
 - ⚙️ **Hierarchical Configuration**: Project-level and global configuration support
 - 🎯 **Jira Integration**: Automatic ticket detection and work hours tracking
 - 🌐 **Multi-language Support**: Generate messages in different languages
 - ✏️ **Editor Integration**: Configurable editor support for reviewing commit messages
-- 🚀 **Easy Setup**: Simple installation and configuration
+- 🛠️ **Easy Setup**: Simple installation and configuration
 
 ## Installation
 
@@ -124,6 +128,11 @@ git-llm config set llm.api_keys.google your-key
 git-llm config set llm.azure_openai.endpoint https://your-resource.openai.azure.com/
 git-llm config set llm.azure_openai.api_version 2024-12-01-preview
 git-llm config set llm.azure_openai.deployment_name gpt-4o
+
+# Hybrid Ollama processing (optional)
+git-llm config set llm.use_ollama_for_chunks true
+git-llm config set llm.ollama_model llama3:8b
+git-llm config set llm.ollama_base_url http://localhost:11434
 ```
 
 #### Editor Configuration
@@ -166,12 +175,21 @@ llm:
     api_version: '2024-12-01-preview'
     deployment_name: 'gpt-4o'
 
+  # LangChain and intelligent processing
+  use_langchain: true
+  chunking_threshold: 12000  # Enable chunking for diffs larger than 12k tokens
+
+  # Hybrid Ollama processing (optional)
+  use_ollama_for_chunks: false   # Set to true to enable
+  ollama_model: "llama3:8b"      # Local model for chunk processing
+  ollama_base_url: "http://localhost:11434"
+
 editor:
   preferred_editor: 'vi'
 
 jira:
   enabled: true
-  branch_regex: '^(feat|fix|chore)\/([A-Z]+-\d+)\/.+$'
+  ticket_pattern: '^(feat|fix|chore)\/([A-Z]+-\d+)\/.+$'
 ```
 
 ### View Configuration
@@ -183,6 +201,86 @@ git-llm config get
 git-llm config get llm.default_model
 git-llm config get editor.preferred_editor
 ```
+
+## Advanced Features
+
+### Intelligent Chunking & Parallel Processing
+
+For large diffs, git-llm-tool automatically uses intelligent chunking to break down changes into manageable pieces:
+
+- **Automatic Threshold Detection**: Diffs larger than 12,000 tokens are automatically chunked
+- **Smart Splitting**: Prioritizes file-based splitting, then hunks, then size-based splitting
+- **Parallel Processing**: Multiple chunks processed simultaneously for faster results
+- **Progress Indicators**: Beautiful progress bars show real-time processing status
+
+```bash
+# Enable verbose mode to see chunking details
+git-llm commit --verbose
+
+# Example output:
+# 🔄 Analyzing diff and creating intelligent chunks...
+# ✅ Created 4 intelligent chunks
+# 📄 Smart chunking stats:
+#    Total chunks: 4
+#    File chunks: 2
+#    Hunk chunks: 2
+#    Complete files: 2
+# 🚀 Processing 4 chunks in parallel (4/4 completed)...
+# ✅ Parallel processing completed: 4/4 chunks successful
+# 🔄 Combining 4 summaries into final commit message...
+# ✅ Final commit message generated successfully
+```
+
+### Hybrid Ollama Processing
+
+Use local Ollama for chunk processing combined with cloud LLM for final quality:
+
+#### Setup Ollama
+```bash
+# Install Ollama (macOS/Linux)
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Pull a model
+ollama pull llama3:8b
+# or
+ollama pull llama3.1:8b
+ollama pull codellama:7b
+```
+
+#### Enable Hybrid Mode
+```bash
+# Enable hybrid processing
+git-llm config set llm.use_ollama_for_chunks true
+git-llm config set llm.ollama_model llama3:8b
+
+# Verify Ollama is running
+curl http://localhost:11434/api/version
+```
+
+#### How It Works
+1. **Map Phase**: Each chunk processed locally with Ollama (fast, private)
+2. **Reduce Phase**: Final combination using cloud LLM (high quality)
+3. **Cost Efficient**: Reduces cloud API usage while maintaining quality
+4. **Privacy**: Sensitive code chunks processed locally
+
+```bash
+# With verbose mode, you'll see:
+git-llm commit --verbose
+
+# 🔄 Hybrid processing mode:
+#    Map phase (chunks): Ollama (llama3:8b)
+#    Reduce phase (final): gpt-4o
+# 🚀 Processing 4 chunks in parallel (4/4 completed)...
+```
+
+### LangChain Integration
+
+Advanced LLM provider management with automatic model selection:
+
+- **Automatic Provider Detection**: Based on model name
+- **Retry Logic**: Exponential backoff for failed requests
+- **Rate Limiting**: Prevents API quota exhaustion
+- **Error Recovery**: Graceful fallbacks
 
 ## CLI Commands Reference
 
@@ -297,6 +395,18 @@ jira:
 
 ### Azure OpenAI
 - Any deployment of the above OpenAI models
+
+### Ollama (Local)
+For hybrid processing (chunk processing only):
+- `llama3:8b` (recommended)
+- `llama3.1:8b`
+- `llama3:70b`
+- `codellama:7b`
+- `codellama:13b`
+- `mistral:7b`
+- `qwen2:7b`
+
+**Note**: Ollama models are used only for chunk processing in hybrid mode. Final commit message generation still uses cloud LLMs for optimal quality.
 
 ## Development
 
@@ -456,7 +566,8 @@ git llm config get
 
 - Python 3.12+
 - Git
-- At least one LLM provider API key
+- At least one LLM provider API key (OpenAI, Anthropic, Google, or Azure OpenAI)
+- **Optional**: Ollama for hybrid processing (local chunk processing)
 
 ## Troubleshooting
 
@@ -476,6 +587,22 @@ git llm config get
 **"No commits found in range"**
 - Make sure you have commits in the specified range
 - Check git log: `git log --oneline`
+
+**"Ollama not available, using main LLM for chunks"**
+- Make sure Ollama is installed and running: `ollama serve`
+- Check Ollama is accessible: `curl http://localhost:11434/api/version`
+- Verify the model is pulled: `ollama list`
+- Pull the model if needed: `ollama pull llama3:8b`
+
+**"Processing is slower than expected"**
+- For large diffs, enable hybrid mode with Ollama for faster chunk processing
+- Check your `chunking_threshold` setting - lower values use chunking sooner
+- Use `--verbose` to see processing details and bottlenecks
+
+**"Chunk processing failed"**
+- If using Ollama, ensure sufficient system resources (RAM)
+- Try a smaller model like `llama3:8b` instead of larger models
+- Check Ollama logs: `ollama logs`
 
 ## License
 
