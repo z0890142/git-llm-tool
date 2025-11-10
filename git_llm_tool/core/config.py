@@ -17,6 +17,13 @@ class LlmConfig:
     api_keys: Dict[str, str] = field(default_factory=dict)
     azure_openai: Dict[str, str] = field(default_factory=dict)  # endpoint, api_version, deployment_name
 
+    # LangChain and chunking configuration
+    use_langchain: bool = True  # Enable LangChain providers by default
+    enable_chunking: bool = True  # Enable intelligent diff chunking
+    chunk_size: int = 4000  # Maximum chunk size in characters
+    chunk_overlap: int = 200  # Overlap between chunks to maintain context
+    chunking_threshold: int = 8000  # Diff size threshold to trigger chunking
+
 
 @dataclass
 class JiraConfig:
@@ -154,7 +161,13 @@ class ConfigLoader:
             default_model=llm_data.get("default_model", "gpt-4o"),
             language=llm_data.get("language", "en"),
             api_keys=llm_data.get("api_keys", {}),
-            azure_openai=llm_data.get("azure_openai", {})
+            azure_openai=llm_data.get("azure_openai", {}),
+            # LangChain and chunking settings
+            use_langchain=llm_data.get("use_langchain", True),
+            enable_chunking=llm_data.get("enable_chunking", True),
+            chunk_size=llm_data.get("chunk_size", 4000),
+            chunk_overlap=llm_data.get("chunk_overlap", 200),
+            chunking_threshold=llm_data.get("chunking_threshold", 8000)
         )
 
         # Create Jira config

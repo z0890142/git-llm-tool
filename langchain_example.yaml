@@ -1,0 +1,32 @@
+# Example configuration for LangChain integration
+# Save this as .git-llm-tool.yaml in your project root or ~/.git-llm-tool/config.yaml
+
+llm:
+  # Enable LangChain providers (default: true)
+  use_langchain: true
+
+  # Model selection (will use appropriate LangChain provider)
+  default_model: "gpt-4o"  # or "claude-3-5-sonnet-20241024"
+
+  # Language for commit messages
+  language: "en"  # or "zh", "ja", etc.
+
+  # API Keys (set via environment variables or config commands)
+  api_keys:
+    openai: "your-openai-api-key"
+    anthropic: "your-anthropic-api-key"
+
+  # Intelligent chunking configuration
+  enable_chunking: true          # Enable automatic diff chunking (default: true)
+  chunk_size: 4000               # Maximum chunk size in characters (default: 4000)
+  chunk_overlap: 200             # Overlap between chunks for context (default: 200)
+  chunking_threshold: 8000       # Diff size threshold to trigger chunking (default: 8000)
+
+# Jira integration (optional)
+jira:
+  enabled: true
+  ticket_pattern: "[A-Z]+-\\d+"  # Regex pattern to match Jira tickets in branch names
+
+# Editor preferences (optional)
+editor:
+  preferred_editor: "code"  # or "vi", "nano", etc.
