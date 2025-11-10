@@ -17,12 +17,27 @@ class LlmConfig:
     api_keys: Dict[str, str] = field(default_factory=dict)
     azure_openai: Dict[str, str] = field(default_factory=dict)  # endpoint, api_version, deployment_name
 
-    # LangChain and chunking configuration
+    # LangChain and processing configuration
     use_langchain: bool = True  # Enable LangChain providers by default
-    enable_chunking: bool = True  # Enable intelligent diff chunking
-    chunk_size: int = 4000  # Maximum chunk size in characters
-    chunk_overlap: int = 200  # Overlap between chunks to maintain context
-    chunking_threshold: int = 8000  # Diff size threshold to trigger chunking
+    chunking_threshold: int = 12000  # Token threshold to trigger chunking + parallel processing
+
+    # Ollama configuration for hybrid processing
+    use_ollama_for_chunks: bool = False  # Use Ollama for chunk processing (map phase)
+    ollama_model: str = "llama3:8b"  # Ollama model for chunk processing
+    ollama_base_url: str = "http://localhost:11434"  # Ollama API base URL
+
+    # Internal constants (not user-configurable)
+    _chunk_size: int = 6000  # Maximum chunk size in characters
+    _chunk_overlap: int = 300  # Overlap between chunks to maintain context
+    _max_parallel_chunks: int = 4  # Maximum number of chunks to process in parallel
+    _chunk_processing_timeout: float = 120.0  # Timeout for each chunk processing (seconds)
+    _max_retries: int = 5  # Maximum number of retries
+    _initial_delay: float = 1.0  # Initial retry delay in seconds
+    _max_delay: float = 60.0  # Maximum retry delay in seconds
+    _backoff_multiplier: float = 2.0  # Exponential backoff multiplier
+    _rate_limit_delay: float = 0.5  # Minimum delay between requests
+    _max_context_lines: int = 3  # Maximum context lines to keep
+    _max_tokens: int = 8000  # Maximum tokens before truncation
 
 
 @dataclass
@@ -164,10 +179,11 @@ class ConfigLoader:
             azure_openai=llm_data.get("azure_openai", {}),
             # LangChain and chunking settings
             use_langchain=llm_data.get("use_langchain", True),
-            enable_chunking=llm_data.get("enable_chunking", True),
-            chunk_size=llm_data.get("chunk_size", 4000),
-            chunk_overlap=llm_data.get("chunk_overlap", 200),
-            chunking_threshold=llm_data.get("chunking_threshold", 8000)
+            chunking_threshold=llm_data.get("chunking_threshold", 12000),
+            # Ollama settings
+            use_ollama_for_chunks=llm_data.get("use_ollama_for_chunks", False),
+            ollama_model=llm_data.get("ollama_model", "llama3:8b"),
+            ollama_base_url=llm_data.get("ollama_base_url", "http://localhost:11434")
         )
 
         # Create Jira config
@@ -200,7 +216,12 @@ class ConfigLoader:
                 "default_model": self._config.llm.default_model,
                 "language": self._config.llm.language,
                 "api_keys": self._config.llm.api_keys,
-                "azure_openai": self._config.llm.azure_openai
+                "azure_openai": self._config.llm.azure_openai,
+                "use_langchain": self._config.llm.use_langchain,
+                "chunking_threshold": self._config.llm.chunking_threshold,
+                "use_ollama_for_chunks": self._config.llm.use_ollama_for_chunks,
+                "ollama_model": self._config.llm.ollama_model,
+                "ollama_base_url": self._config.llm.ollama_base_url
             },
             "jira": {
                 "enabled": self._config.jira.enabled,
@@ -246,6 +267,15 @@ class ConfigLoader:
         # Handle llm.language
         elif keys[0] == "llm" and keys[1] == "language":
             self._config.llm.language = value
+        # Handle llm.use_ollama_for_chunks
+        elif keys[0] == "llm" and keys[1] == "use_ollama_for_chunks":
+            self._config.llm.use_ollama_for_chunks = value.lower() in ("true", "1", "yes", "on")
+        # Handle llm.ollama_model
+        elif keys[0] == "llm" and keys[1] == "ollama_model":
+            self._config.llm.ollama_model = value
+        # Handle llm.ollama_base_url
+        elif keys[0] == "llm" and keys[1] == "ollama_base_url":
+            self._config.llm.ollama_base_url = value
         # Handle llm.api_keys.*
         elif keys[0] == "llm" and keys[1] == "api_keys" and len(keys) == 3:
             self._config.llm.api_keys[keys[2]] = value
@@ -277,6 +307,15 @@ class ConfigLoader:
         # Handle llm.language
         elif keys[0] == "llm" and keys[1] == "language":
             return self._config.llm.language
+        # Handle llm.use_ollama_for_chunks
+        elif keys[0] == "llm" and keys[1] == "use_ollama_for_chunks":
+            return self._config.llm.use_ollama_for_chunks
+        # Handle llm.ollama_model
+        elif keys[0] == "llm" and keys[1] == "ollama_model":
+            return self._config.llm.ollama_model
+        # Handle llm.ollama_base_url
+        elif keys[0] == "llm" and keys[1] == "ollama_base_url":
+            return self._config.llm.ollama_base_url
         # Handle llm.api_keys.*
         elif keys[0] == "llm" and keys[1] == "api_keys" and len(keys) == 3:
             return self._config.llm.api_keys.get(keys[2])

@@ -100,11 +100,15 @@ class JiraHelper:
             Jira ticket number or None if skipped
         """
         click.echo("\n🎫 Jira Integration")
-        ticket = click.prompt(
-            "Enter Jira ticket number (or press Enter to skip)",
-            default="",
-            show_default=False,
-        ).strip()
+        try:
+            ticket = click.prompt(
+                "Enter Jira ticket number (or press Enter to skip)",
+                default="",
+                show_default=False,
+            ).strip()
+        except (KeyboardInterrupt, click.Abort):
+            click.echo("\n⏭️  Skipping Jira integration")
+            return None
 
         if not ticket:
             return None

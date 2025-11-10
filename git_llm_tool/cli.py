@@ -12,14 +12,10 @@ from git_llm_tool.commands.changelog_cmd import execute_changelog
 
 @click.group()
 @click.version_option(version=__version__)
-@click.option(
-    "--verbose", "-v", is_flag=True, help="Enable verbose output"
-)
 @click.pass_context
-def main(ctx, verbose):
+def main(ctx):
     """AI-powered git commit message and changelog generator."""
     ctx.ensure_object(dict)
-    ctx.obj['verbose'] = verbose
 
 
 @main.command()
@@ -35,11 +31,18 @@ def main(ctx, verbose):
     "--language", "-l",
     help="Output language (overrides config)"
 )
+@click.option(
+    "--verbose", "-v", is_flag=True,
+    help="Enable verbose output"
+)
+@click.option(
+    "--no-jira", is_flag=True,
+    help="Skip Jira ticket input"
+)
 @click.pass_context
-def commit(ctx, apply, model, language):
+def commit(ctx, apply, model, language, verbose, no_jira):
     """Generate AI-powered commit message from staged changes."""
-    verbose = ctx.obj.get('verbose', False) if ctx.obj else False
-    execute_commit(apply=apply, model=model, language=language, verbose=verbose)
+    execute_commit(apply=apply, model=model, language=language, verbose=verbose, no_jira=no_jira)
 
 
 @main.command()
@@ -59,10 +62,13 @@ def commit(ctx, apply, model, language):
     "--force", "-f", is_flag=True,
     help="Force overwrite existing output file"
 )
+@click.option(
+    "--verbose", "-v", is_flag=True,
+    help="Enable verbose output"
+)
 @click.pass_context
-def changelog(ctx, from_ref, to_ref, output, force):
+def changelog(ctx, from_ref, to_ref, output, force, verbose):
     """Generate changelog from git history."""
-    verbose = ctx.obj.get('verbose', False) if ctx.obj else False
     execute_changelog(from_ref=from_ref, to_ref=to_ref, output=output, force=force, verbose=verbose)
 
 
@@ -122,8 +128,8 @@ def get(key):
                     click.echo(f"    {key} = {value}")
 
             click.echo(f"  jira.enabled = {config.jira.enabled}")
-            if config.jira.branch_regex:
-                click.echo(f"  jira.branch_regex = {config.jira.branch_regex}")
+            if config.jira.ticket_pattern:
+                click.echo(f"  jira.ticket_pattern = {config.jira.ticket_pattern}")
 
             if config.editor.preferred_editor:
                 click.echo(f"  editor.preferred_editor = {config.editor.preferred_editor}")

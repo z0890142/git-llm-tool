@@ -1,12 +1,9 @@
-# Example configuration for LangChain integration
+# Example configuration for git-llm-tool with LangChain integration
 # Save this as .git-llm-tool.yaml in your project root or ~/.git-llm-tool/config.yaml
 
 llm:
-  # Enable LangChain providers (default: true)
-  use_langchain: true
-
   # Model selection (will use appropriate LangChain provider)
-  default_model: "gpt-4o"  # or "claude-3-5-sonnet-20241024"
+  default_model: "gpt-4o"  # or "claude-3-5-sonnet-20241024", "gpt-4", etc.
 
   # Language for commit messages
   language: "en"  # or "zh", "ja", etc.
@@ -16,11 +13,16 @@ llm:
     openai: "your-openai-api-key"
     anthropic: "your-anthropic-api-key"
 
-  # Intelligent chunking configuration
-  enable_chunking: true          # Enable automatic diff chunking (default: true)
-  chunk_size: 4000               # Maximum chunk size in characters (default: 4000)
-  chunk_overlap: 200             # Overlap between chunks for context (default: 200)
-  chunking_threshold: 8000       # Diff size threshold to trigger chunking (default: 8000)
+  # Processing strategy threshold (tokens)
+  # Below this threshold: single request processing
+  # Above this threshold: intelligent chunking with parallel processing
+  chunking_threshold: 12000      # Token threshold to trigger chunking (default: 12000)
+
+  # Hybrid Ollama processing (optional)
+  # Use local Ollama for chunk processing (map phase), cloud LLM for final result (reduce phase)
+  use_ollama_for_chunks: false   # Enable Ollama for chunk processing (default: false)
+  ollama_model: "llama3:8b"      # Ollama model for chunks (default: "llama3:8b")
+  ollama_base_url: "http://localhost:11434"  # Ollama API URL (default: "http://localhost:11434")
 
 # Jira integration (optional)
 jira:

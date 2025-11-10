@@ -14,7 +14,8 @@ def execute_commit(
     apply: bool = False,
     model: Optional[str] = None,
     language: Optional[str] = None,
-    verbose: bool = False
+    verbose: bool = False,
+    no_jira: bool = False
 ) -> None:
     """Execute the commit command logic.
 
@@ -23,6 +24,7 @@ def execute_commit(
         model: Override model from config
         language: Override language from config
         verbose: Enable verbose output
+        no_jira: Skip Jira ticket input
     """
     try:
         # Load configuration
@@ -65,21 +67,26 @@ def execute_commit(
             return
 
         # Initialize Jira helper and get Jira context
-        jira_helper = JiraHelper(config, git_helper)
+        jira_ticket, work_hours = None, None
 
-        try:
-            jira_helper.validate_config()
-            jira_ticket, work_hours = jira_helper.get_jira_context(verbose=verbose)
+        if not no_jira:
+            jira_helper = JiraHelper(config, git_helper)
 
-            if jira_ticket or work_hours:
-                jira_info = jira_helper.format_jira_info(jira_ticket, work_hours)
-                click.echo(f"📋 Jira Info: {jira_info}")
+            try:
+                jira_helper.validate_config()
+                jira_ticket, work_hours = jira_helper.get_jira_context(verbose=verbose)
 
-        except JiraError as e:
-            click.echo(f"⚠️  Jira Error: {e}", err=True)
-            # Continue without Jira info
-            jira_ticket = None
-            work_hours = None
+                if jira_ticket or work_hours:
+                    jira_info = jira_helper.format_jira_info(jira_ticket, work_hours)
+                    click.echo(f"📋 Jira Info: {jira_info}")
+            except JiraError as e:
+                if verbose:
+                    click.echo(f"⚠️ Jira processing skipped: {e}")
+                # Continue without Jira integration
+                pass
+        else:
+            if verbose:
+                click.echo("🔒 Jira integration skipped (--no-jira flag)")
 
         # Generate commit message
         click.echo("🤖 Generating commit message...")
