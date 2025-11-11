@@ -1,11 +1,10 @@
 """LangChain base provider implementation."""
 
 from abc import abstractmethod
-from typing import Optional, List
+from typing import Optional, List, Any, Callable
 from dataclasses import dataclass
 import time
-import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 from halo import Halo
 from langchain_core.documents import Document
@@ -37,79 +36,60 @@ class LangChainProvider(LlmProvider):
     def __init__(self, config: AppConfig, llm: Optional[BaseLanguageModel] = None):
         """Initialize the LangChain provider."""
         super().__init__(config)
-
-        # Set the main LLM (provided by subclass or create one)
         self.llm = llm if llm is not None else self._create_llm()
-
-        # Initialize Ollama LLM for chunk processing if enabled
-        self.ollama_llm = None
-        if config.llm.use_ollama_for_chunks:
-            try:
-                self.ollama_llm = OllamaLLM(
-                    model=config.llm.ollama_model,
-                    base_url=config.llm.ollama_base_url,
-                    temperature=0.1,
-                    top_p=0.9,
-                    top_k=40,
-                    num_predict=100,  # Limit response length
-                    timeout=30.0  # 30 second timeout per request
-                )
-            except Exception as e:
-                # If Ollama is not available, fall back to main LLM
-                print(f"⚠️ Ollama not available, using main LLM for chunks: {e}")
-                self.ollama_llm = None
-
-        # Always initialize rate limiter (simplified - always enabled)
-        rate_config = RateLimitConfig(
-            max_retries=config.llm._max_retries,
-            initial_delay=config.llm._initial_delay,
-            max_delay=config.llm._max_delay,
-            backoff_multiplier=config.llm._backoff_multiplier,
-            rate_limit_delay=config.llm._rate_limit_delay
-        )
-        self.rate_limiter = RateLimiter(rate_config)
-
-        # Always initialize diff optimizer (simplified - always enabled)
-        self.diff_optimizer = DiffOptimizer(
-            max_context_lines=config.llm._max_context_lines
-        )
-
-        # Always initialize token counter
+        self.ollama_llm = self._init_ollama()
+        self.rate_limiter = self._init_rate_limiter()
+        self.diff_optimizer = DiffOptimizer(max_context_lines=config.llm._max_context_lines)
         self.token_counter = TokenCounter(config.llm.default_model)
-
-        # Always initialize smart chunker (will be used based on threshold)
         self.smart_chunker = SmartChunker(
             chunk_size=config.llm.chunk_size,
             chunk_overlap=config.llm.chunk_overlap,
             model_name=config.llm.default_model
         )
 
-        # Keep fallback text splitter for edge cases
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=config.llm.chunk_size,
-            chunk_overlap=config.llm.chunk_overlap,
-            separators=[
-                "\n\ndiff --git",  # Git diff file separators
-                "\n@@",           # Git diff hunk separators
-                "\n+",            # Added lines
-                "\n-",            # Removed lines
-                "\n",             # General newlines
-                " ",              # Spaces
-                "",               # Characters
-            ]
+    def _init_ollama(self) -> Optional[OllamaLLM]:
+        """Initialize the Ollama LLM if configured."""
+        if not self.config.llm.use_ollama_for_chunks:
+            return None
+        try:
+            return OllamaLLM(
+                model=self.config.llm.ollama_model,
+                base_url=self.config.llm.ollama_base_url,
+                temperature=0.1, top_p=0.9, top_k=40,
+                num_predict=100, timeout=30.0
+            )
+        except Exception as e:
+            print(f"⚠️ Ollama not available, using main LLM for chunks: {e}")
+            return None
+
+    def _init_rate_limiter(self) -> RateLimiter:
+        """Initialize the rate limiter."""
+        rate_config = RateLimitConfig(
+            max_retries=self.config.llm._max_retries,
+            initial_delay=self.config.llm._initial_delay,
+            max_delay=self.config.llm._max_delay,
+            backoff_multiplier=self.config.llm._backoff_multiplier,
+            rate_limit_delay=self.config.llm._rate_limit_delay
         )
+        return RateLimiter(rate_config)
 
     @abstractmethod
     def _create_llm(self) -> BaseLanguageModel:
-        """Create the specific LangChain LLM instance.
-
-        Returns:
-            Configured LangChain LLM instance
-
-        Raises:
-            ApiError: If LLM creation fails
-        """
+        """Create the specific LangChain LLM instance."""
         pass
+
+    def _extract_response_content(self, response: Any) -> str:
+        """Extracts and strips string content from various LLM response types."""
+        if hasattr(response, 'content'):
+            return response.content.strip()
+        if isinstance(response, str):
+            return response.strip()
+        return str(response).strip()
+
+    def _log_verbose(self, message: str, verbose: bool):
+        """Logs a message if verbose mode is enabled."""
+        if verbose:
+            print(message)
 
     def generate_commit_message(
         self,
@@ -120,67 +100,53 @@ class LangChainProvider(LlmProvider):
     ) -> str:
         """Generate commit message using LangChain with optimizations."""
         start_time = time.time()
+        verbose = kwargs.get("verbose", False)
 
         try:
-            # Step 1: Pre-optimize diff if enabled
-            optimized_diff = diff
-            # Simple decision: chunking threshold determines everything
-            diff_tokens = self.token_counter.count_tokens(diff)
-            will_chunk = diff_tokens > self.config.llm.chunking_threshold
+            # Step 1: Optimize diff
+            # A less aggressive optimization is used initially to preserve structure for chunking.
+            optimized_diff, diff_stats = self.diff_optimizer.optimize_diff(diff, aggressive=False)
+            optimized_tokens = self.token_counter.count_tokens(optimized_diff)
 
-            # Use lighter optimization if we will chunk (preserve diff structure)
-            # Use more aggressive optimization if we won't chunk (save tokens)
-            use_aggressive = not will_chunk
-
-            optimized_diff, diff_stats = self.diff_optimizer.optimize_diff(
-                diff,
-                aggressive=use_aggressive
+            self._log_verbose(
+                f"📊 Diff pre-optimization (aggressive=False):\n"
+                f"   Original size: {diff_stats.original_size:,} chars\n"
+                f"   Optimized size: {diff_stats.optimized_size:,} chars\n"
+                f"   Compression ratio: {diff_stats.compression_ratio:.2f}",
+                verbose
             )
 
-            if kwargs.get("verbose", False):
-                print(f"📊 Diff pre-optimization (aggressive={use_aggressive}):")
-                print(f"   Original size: {diff_stats.original_size:,} chars")
-                print(f"   Optimized size: {diff_stats.optimized_size:,} chars")
-                print(f"   Compression ratio: {diff_stats.compression_ratio:.2f}")
-                print(f"   Files processed: {diff_stats.files_processed}")
-
-            # If not chunking and still too large, apply smart truncation using accurate token count
-            current_tokens = self.token_counter.count_tokens(optimized_diff)
-            if not will_chunk and current_tokens > self.config.llm._max_tokens:
-                if kwargs.get("verbose", False):
-                    print(f"   Current tokens: {current_tokens:,} (exceeds limit: {self.config.llm._max_tokens:,})")
-
-                optimized_diff = self.token_counter.truncate_to_tokens(
-                    optimized_diff,
-                    self.config.llm._max_tokens
+            # Step 2: Decide processing strategy based on token count
+            if optimized_tokens > self.config.llm.chunking_threshold:
+                self._log_verbose(
+                    f"🔄 Using intelligent chunking strategy for large diff.\n"
+                    f"   Diff tokens: {optimized_tokens:,} (threshold: {self.config.llm.chunking_threshold:,})",
+                    verbose
                 )
-                new_tokens = self.token_counter.count_tokens(optimized_diff)
-                if kwargs.get("verbose", False):
-                    print(f"   Truncated to: {new_tokens:,} tokens ({len(optimized_diff):,} chars)")
-
-            # Step 2: Simple decision - use threshold to decide processing strategy
-            optimized_tokens = self.token_counter.count_tokens(optimized_diff)
-            should_chunk = optimized_tokens > self.config.llm.chunking_threshold
-
-            if should_chunk:
-                if kwargs.get("verbose", False):
-                    print(f"🔄 Using intelligent chunking strategy for large diff")
-                    print(f"   Diff tokens: {optimized_tokens:,} (threshold: {self.config.llm.chunking_threshold:,})")
                 result = self._generate_with_smart_chunking(optimized_diff, jira_ticket, work_hours, **kwargs)
             else:
-                if kwargs.get("verbose", False):
-                    print(f"✨ Using direct processing")
-                    print(f"   Diff tokens: {optimized_tokens:,} (under threshold: {self.config.llm.chunking_threshold:,})")
+                # If not chunking, we can be more aggressive with optimizations.
+                optimized_diff, _ = self.diff_optimizer.optimize_diff(diff, aggressive=True)
+                current_tokens = self.token_counter.count_tokens(optimized_diff)
+
+                # Truncate if it's still too large for a single call.
+                if current_tokens > self.config.llm._max_tokens:
+                    self._log_verbose(f"   Tokens {current_tokens:,} exceed limit {self.config.llm._max_tokens:,}. Truncating...", verbose)
+                    optimized_diff = self.token_counter.truncate_to_tokens(optimized_diff, self.config.llm._max_tokens)
+                    self._log_verbose(f"   Truncated to: {self.token_counter.count_tokens(optimized_diff):,} tokens", verbose)
+
+                self._log_verbose(
+                    f"✨ Using direct processing.\n"
+                    f"   Final diff tokens: {self.token_counter.count_tokens(optimized_diff):,}",
+                    verbose
+                )
                 result = self._generate_simple(optimized_diff, jira_ticket, work_hours, **kwargs)
 
-            processing_time = time.time() - start_time
-            if kwargs.get("verbose", False):
-                print(f"⏱️  Total processing time: {processing_time:.2f}s")
-
+            self._log_verbose(f"⏱️  Total processing time: {time.time() - start_time:.2f}s", verbose)
             return result
 
         except Exception as e:
-            raise ApiError(f"LangChain provider error: {e}")
+            raise ApiError(f"LangChain provider error: {e}") from e
 
     def _generate_simple(
         self,
@@ -189,34 +155,19 @@ class LangChainProvider(LlmProvider):
         work_hours: Optional[str] = None,
         **kwargs
     ) -> str:
-        """Generate commit message without chunking."""
+        """Generate a commit message for a single piece of text (no chunking)."""
         prompt = self._build_commit_prompt(diff, jira_ticket, work_hours)
-
+        
         def _make_llm_call():
-            """Internal function to make the LLM call."""
             return self.llm.invoke(prompt, **kwargs)
 
         try:
-            # Show progress for simple processing too
             with Halo(text="🤖 Generating commit message...", spinner="dots") as spinner:
-                # Use rate limiter if available
-                if self.rate_limiter:
-                    response = self.rate_limiter.retry_with_backoff(_make_llm_call)
-                else:
-                    response = _make_llm_call()
-
+                response = self.rate_limiter.retry_with_backoff(_make_llm_call)
                 spinner.succeed("✅ Commit message generated successfully")
-
-            # Handle different response types
-            if hasattr(response, 'content'):
-                return response.content.strip()
-            elif isinstance(response, str):
-                return response.strip()
-            else:
-                return str(response).strip()
-
+            return self._extract_response_content(response)
         except Exception as e:
-            raise ApiError(f"Failed to generate commit message: {e}")
+            raise ApiError(f"Failed to generate commit message: {e}") from e
 
     def _generate_with_smart_chunking(
         self,
@@ -225,11 +176,9 @@ class LangChainProvider(LlmProvider):
         work_hours: Optional[str] = None,
         **kwargs
     ) -> str:
-        """Generate commit message using smart chunking and rate limiting."""
+        """Generate a commit message using a map-reduce strategy on intelligent chunks."""
         verbose = kwargs.get("verbose", False)
-
         try:
-            # Show chunking progress
             with Halo(text="🔄 Analyzing diff and creating intelligent chunks...", spinner="dots") as spinner:
                 chunk_infos = self.smart_chunker.chunk_diff(diff)
                 docs = self.smart_chunker.chunks_to_documents(chunk_infos)
@@ -237,53 +186,25 @@ class LangChainProvider(LlmProvider):
 
             if verbose:
                 stats = self.smart_chunker.get_chunking_stats(chunk_infos)
-                print(f"📄 Smart chunking stats:")
-                print(f"   Total chunks: {stats['total_chunks']}")
-                print(f"   File chunks: {stats['file_chunks']}")
-                print(f"   Hunk chunks: {stats['hunk_chunks']}")
-                print(f"   Size-based chunks: {stats['size_based_chunks']}")
-                print(f"   Complete files: {stats['complete_files']}")
-                print(f"   Average chunk size: {stats['average_chunk_size']:,} chars")
+                print(f"📄 Smart chunking stats:\n"
+                      f"   Total chunks: {stats['total_chunks']}\n"
+                      f"   File/Hunk/Size-based chunks: {stats['file_chunks']}/{stats['hunk_chunks']}/{stats['size_based_chunks']}\n"
+                      f"   Average chunk size: {stats['average_chunk_size']:,} chars")
+                
+                mode = "Hybrid" if self.ollama_llm else "Standard"
+                map_model = self.config.llm.ollama_model if self.ollama_llm else self.config.llm.default_model
+                print(f"🔄 {mode} processing mode:\n"
+                      f"   Map phase (chunks): {map_model}\n"
+                      f"   Reduce phase (final): {self.config.llm.default_model}")
 
-                # Show hybrid processing info
-                if self.ollama_llm is not None:
-                    print(f"🔄 Hybrid processing mode:")
-                    print(f"   Map phase (chunks): Ollama ({self.config.llm.ollama_model})")
-                    print(f"   Reduce phase (final): {self.config.llm.default_model}")
-                else:
-                    print(f"🔄 Standard processing mode:")
-                    print(f"   All phases: {self.config.llm.default_model}")
-
-            # Use manual map-reduce to avoid dict concatenation issues
             if len(docs) == 1:
-                # Single chunk, use direct processing
-                with Halo(text="🤖 Generating commit message for single chunk...", spinner="dots") as spinner:
-                    prompt = self._build_commit_prompt(docs[0].page_content, jira_ticket, work_hours)
-
-                    def _make_single_call():
-                        return self.llm.invoke(prompt)
-
-                    if self.rate_limiter:
-                        response = self.rate_limiter.retry_with_backoff(_make_single_call)
-                    else:
-                        response = _make_single_call()
-
-                    # Handle response
-                    if hasattr(response, 'content'):
-                        result = response.content.strip()
-                    elif isinstance(response, str):
-                        result = response.strip()
-                    else:
-                        result = str(response).strip()
-
-                    spinner.succeed("✅ Commit message generated successfully")
-                    return result
-            else:
-                # Multiple chunks, use manual map-reduce
-                return self._manual_map_reduce(docs, jira_ticket, work_hours, **kwargs)
+                self._log_verbose("Single chunk created, using direct generation.", verbose)
+                return self._generate_simple(docs[0].page_content, jira_ticket, work_hours, **kwargs)
+            
+            return self._manual_map_reduce(docs, jira_ticket, work_hours, **kwargs)
 
         except Exception as e:
-            raise ApiError(f"Failed to generate commit message with smart chunking: {e}")
+            raise ApiError(f"Failed to generate commit message with smart chunking: {e}") from e
 
     def _manual_map_reduce(
         self,
@@ -292,18 +213,27 @@ class LangChainProvider(LlmProvider):
         work_hours: Optional[str] = None,
         **kwargs
     ) -> str:
-        """Manual map-reduce implementation with parallel processing."""
-        try:
-            # Improved parallel processing with timeout handling and fallback
-            use_parallel = (self.ollama_llm is not None) or (len(docs) > 1)
+        """Orchestrates the map-reduce process, choosing between parallel and sequential execution."""
+        # Simple flag to control parallel execution. Can be tied to config.
+        use_parallel = self.ollama_llm is not None or len(docs) > 1
 
+        try:
             if use_parallel:
                 return self._parallel_map_reduce(docs, jira_ticket, work_hours, **kwargs)
-            else:
-                return self._sequential_map_reduce(docs, jira_ticket, work_hours, **kwargs)
-
+            return self._sequential_map_reduce(docs, jira_ticket, work_hours, **kwargs)
         except Exception as e:
-            raise ApiError(f"Manual map-reduce failed: {e}")
+            raise ApiError(f"Map-reduce process failed: {e}") from e
+
+    def _process_chunk_for_map(self, doc: Document) -> str:
+        """Processes a single document chunk for the map phase."""
+        map_prompt = self._create_simple_map_prompt(doc.page_content)
+        
+        def _make_map_call():
+            llm_for_chunk = self.ollama_llm or self.llm
+            return llm_for_chunk.invoke(map_prompt)
+
+        response = self.rate_limiter.retry_with_backoff(_make_map_call)
+        return self._extract_response_content(response)
 
     def _parallel_map_reduce(
         self,
@@ -312,154 +242,35 @@ class LangChainProvider(LlmProvider):
         work_hours: Optional[str] = None,
         **kwargs
     ) -> str:
-        """Parallel map-reduce implementation for faster processing."""
+        """Parallel map-reduce implementation."""
         verbose = kwargs.get("verbose", False)
+        summaries = [""] * len(docs)
+        
+        if self.ollama_llm:
+            max_workers = min(getattr(self.config.llm, "ollama_max_parallel_chunks", 2), len(docs))
+        else:
+            max_workers = min(getattr(self.config.llm, "max_parallel_chunks", 4), len(docs))
 
-        try:
-            # Map phase: Process chunks in parallel
-            summaries = [""] * len(docs)  # Pre-allocate to maintain order
+        print(f"🚀 Launching {max_workers} parallel workers for {len(docs)} chunks...")
 
-            def process_chunk(index_doc_pair):
-                """Process a single chunk."""
-                i, doc = index_doc_pair
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_index = {executor.submit(self._process_chunk_for_map, doc): i for i, doc in enumerate(docs)}
+            
+            completed_count = 0
+            for future in as_completed(future_to_index):
+                index = future_to_index[future]
                 try:
-                    if kwargs.get("verbose", False):
-                        print(f"📝 Processing chunk {i+1}/{len(docs)} in parallel...")
-
-                    # Create map prompt for this chunk
-                    map_prompt = self._create_simple_map_prompt(doc.page_content)
-
-                    def _make_map_call():
-                        # Use Ollama for chunk processing if available, otherwise use main LLM
-                        if self.ollama_llm is not None:
-                            return self.ollama_llm.invoke(map_prompt)
-                        else:
-                            return self.llm.invoke(map_prompt)
-
-                    # Execute with rate limiting
-                    if self.rate_limiter:
-                        response = self.rate_limiter.retry_with_backoff(_make_map_call)
-                    else:
-                        response = _make_map_call()
-
-                    # Extract text from response
-                    if hasattr(response, 'content'):
-                        summary = response.content.strip()
-                    elif isinstance(response, str):
-                        summary = response.strip()
-                    else:
-                        summary = str(response).strip()
-
-                    if kwargs.get("verbose", False):
-                        print(f"   ✅ Chunk {i+1} completed ({len(summary)} chars)")
-
-                    return i, summary
-
+                    summary = future.result()
+                    summaries[index] = summary
+                    self._log_verbose(f"✅ [Worker] Chunk {index + 1} done.", verbose)
                 except Exception as e:
-                    if kwargs.get("verbose", False):
-                        print(f"   ❌ Chunk {i+1} failed: {e}")
-                    return i, f"Error processing chunk: {str(e)}"
+                    summaries[index] = f"⚠️ Error processing chunk {index + 1}: {e}"
+                    self._log_verbose(f"❌ [Worker] Chunk {index + 1} failed: {e}", verbose)
+                
+                completed_count += 1
+                print(f"Progress: {completed_count}/{len(docs)} ({completed_count / len(docs):.1%})")
 
-            # Execute parallel processing with configurable worker count
-            if self.ollama_llm is not None:
-                # Ollama is local, use configured Ollama concurrency
-                max_workers = min(self.config.llm.ollama_max_parallel_chunks, len(docs))
-            else:
-                # Remote API, use configured remote API concurrency
-                max_workers = min(self.config.llm.max_parallel_chunks, len(docs))
-            completed_chunks = 0
-
-            with Halo(text=f"🚀 Starting {max_workers} parallel workers for {len(docs)} chunks...", spinner="dots") as spinner:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    # Submit all tasks
-                    future_to_index = {
-                        executor.submit(process_chunk, (i, doc)): i
-                        for i, doc in enumerate(docs)
-                    }
-
-                    # Collect results as they complete with reasonable timeout
-                    # Use per-chunk timeout plus some buffer, not total timeout
-                    reasonable_timeout = min(600, self.config.llm.chunk_processing_timeout * 3)  # Max 10 minutes or 3x per-chunk timeout
-
-                    try:
-                        for future in as_completed(future_to_index, timeout=reasonable_timeout):
-                            try:
-                                index, summary = future.result(timeout=30)  # Individual result timeout
-                                summaries[index] = summary
-                                completed_chunks += 1
-
-                                # Update spinner text with progress - show parallel workers in action
-                                progress_percent = (completed_chunks / len(docs)) * 100
-                                spinner.text = f"🚀 Parallel processing: {completed_chunks}/{len(docs)} chunks completed ({progress_percent:.1f}%) [{max_workers} workers]"
-
-                                if verbose and not summary.startswith("Error"):
-                                    spinner.text += f" ✅ Chunk {index+1}"
-
-                            except Exception as e:
-                                # Handle individual chunk failures
-                                index = future_to_index[future]
-                                summaries[index] = f"Chunk processing failed: {str(e)}"
-                                completed_chunks += 1
-
-                                progress_percent = (completed_chunks / len(docs)) * 100
-                                spinner.text = f"🚀 Parallel processing: {completed_chunks}/{len(docs)} chunks completed ({progress_percent:.1f}%) [{max_workers} workers]"
-                                if verbose:
-                                    spinner.text += f" ❌ Chunk {index+1} failed"
-
-                    except Exception as timeout_error:
-                        # Handle global timeout or other as_completed errors
-                        spinner.text = f"⚠️ Parallel processing timeout after {reasonable_timeout}s, collecting partial results..."
-
-                        # Collect any completed futures
-                        for future in future_to_index:
-                            if future.done():
-                                try:
-                                    index, summary = future.result(timeout=1)
-                                    summaries[index] = summary
-                                    completed_chunks += 1
-                                except:
-                                    index = future_to_index[future]
-                                    summaries[index] = f"Timeout or error processing chunk"
-                                    completed_chunks += 1
-                            else:
-                                # Cancel remaining futures
-                                future.cancel()
-                                index = future_to_index[future]
-                                summaries[index] = f"Cancelled due to timeout"
-                                completed_chunks += 1
-
-                successful_chunks = len([s for s in summaries if not s.startswith("Error") and not s.startswith("Chunk processing failed")])
-                spinner.succeed(f"✅ Parallel processing completed with {max_workers} workers: {successful_chunks}/{len(docs)} chunks successful")
-
-            # Reduce phase: Combine summaries into final commit message
-            with Halo(text=f"🔄 Combining {len(summaries)} summaries into final commit message...", spinner="dots") as spinner:
-                combined_summary = "\n\n".join([f"Part {i+1}: {summary}" for i, summary in enumerate(summaries)])
-                combine_prompt = self._create_combine_prompt(combined_summary, jira_ticket, work_hours)
-
-                def _make_combine_call():
-                    return self.llm.invoke(combine_prompt)
-
-                # Execute final combination with rate limiting
-                if self.rate_limiter:
-                    final_response = self.rate_limiter.retry_with_backoff(_make_combine_call)
-                else:
-                    final_response = _make_combine_call()
-
-                spinner.succeed("✅ Final commit message generated successfully")
-
-            # Extract final result
-            if hasattr(final_response, 'content'):
-                return final_response.content.strip()
-            elif isinstance(final_response, str):
-                return final_response.strip()
-            else:
-                return str(final_response).strip()
-
-        except Exception as e:
-            if kwargs.get("verbose", False):
-                print(f"❌ Parallel processing failed ({type(e).__name__}: {e}), falling back to sequential...")
-            # Clear any partial results and use sequential fallback
-            return self._sequential_map_reduce(docs, jira_ticket, work_hours, **kwargs)
+        return self._reduce_phase(summaries, jira_ticket, work_hours)
 
     def _sequential_map_reduce(
         self,
@@ -469,69 +280,42 @@ class LangChainProvider(LlmProvider):
         **kwargs
     ) -> str:
         """Sequential map-reduce implementation (fallback)."""
-        try:
-            # Map phase: Summarize each chunk sequentially
-            summaries = []
-
-            with Halo(text=f"⏳ Processing {len(docs)} chunks sequentially (0/{len(docs)} completed)...", spinner="dots") as spinner:
-                for i, doc in enumerate(docs):
-                    spinner.text = f"⏳ Processing chunk {i+1}/{len(docs)} sequentially..."
-
-                    # Create map prompt for this chunk
-                    map_prompt = self._create_simple_map_prompt(doc.page_content)
-
-                    def _make_map_call():
-                        # Use Ollama for chunk processing if available, otherwise use main LLM
-                        if self.ollama_llm is not None:
-                            return self.ollama_llm.invoke(map_prompt)
-                        else:
-                            return self.llm.invoke(map_prompt)
-
-                    # Execute with rate limiting
-                    if self.rate_limiter:
-                        response = self.rate_limiter.retry_with_backoff(_make_map_call)
-                    else:
-                        response = _make_map_call()
-
-                    # Extract text from response
-                    if hasattr(response, 'content'):
-                        summary = response.content.strip()
-                    elif isinstance(response, str):
-                        summary = response.strip()
-                    else:
-                        summary = str(response).strip()
-
+        summaries = []
+        with Halo(text=f"⏳ Processing {len(docs)} chunks sequentially...", spinner="dots") as spinner:
+            for i, doc in enumerate(docs):
+                spinner.text = f"⏳ Processing chunk {i+1}/{len(docs)}..."
+                try:
+                    summary = self._process_chunk_for_map(doc)
                     summaries.append(summary)
-                    spinner.text = f"⏳ Processing {len(docs)} chunks sequentially ({i+1}/{len(docs)} completed)..."
+                except Exception as e:
+                    summaries.append(f"⚠️ Error processing chunk {i + 1}: {e}")
+            spinner.succeed(f"✅ All {len(docs)} chunks processed.")
+        
+        return self._reduce_phase(summaries, jira_ticket, work_hours)
 
-                spinner.succeed(f"✅ Sequential processing completed for {len(docs)} chunks")
+    def _reduce_phase(
+        self,
+        summaries: List[str],
+        jira_ticket: Optional[str] = None,
+        work_hours: Optional[str] = None
+    ) -> str:
+        """Combines summaries from the map phase into a final commit message."""
+        successful_chunks = len([s for s in summaries if not s.startswith("⚠️")])
+        print(f"✅ Map phase done: {successful_chunks}/{len(summaries)} chunks successful.")
 
-            # Reduce phase: Combine summaries into final commit message
-            with Halo(text=f"🔄 Combining {len(summaries)} summaries into final commit message...", spinner="dots") as spinner:
-                combined_summary = "\n\n".join([f"Part {i+1}: {summary}" for i, summary in enumerate(summaries)])
-                combine_prompt = self._create_combine_prompt(combined_summary, jira_ticket, work_hours)
+        combined_summary = "\n\n".join(
+            [f"Part {i+1}: {summary}" for i, summary in enumerate(summaries)]
+        )
+        combine_prompt = self._create_combine_prompt(combined_summary, jira_ticket, work_hours)
 
-                def _make_combine_call():
-                    return self.llm.invoke(combine_prompt)
+        def _make_combine_call():
+            return self.llm.invoke(combine_prompt)
 
-                # Execute final combination with rate limiting
-                if self.rate_limiter:
-                    final_response = self.rate_limiter.retry_with_backoff(_make_combine_call)
-                else:
-                    final_response = _make_combine_call()
-
-                spinner.succeed("✅ Final commit message generated successfully")
-
-            # Extract final result
-            if hasattr(final_response, 'content'):
-                return final_response.content.strip()
-            elif isinstance(final_response, str):
-                return final_response.strip()
-            else:
-                return str(final_response).strip()
-
-        except Exception as e:
-            raise ApiError(f"Sequential map-reduce failed: {e}")
+        with Halo(text="🔄 Combining summaries into the final message...", spinner="dots") as spinner:
+            final_response = self.rate_limiter.retry_with_backoff(_make_combine_call)
+            spinner.succeed("✅ Final commit message generated.")
+        
+        return self._extract_response_content(final_response)
 
     def _create_simple_map_prompt(self, chunk_content: str) -> str:
         """Create a simple prompt for analyzing a diff chunk."""
@@ -554,12 +338,11 @@ Summary of changes in this part:"""
         work_hours: Optional[str] = None
     ) -> str:
         """Create prompt for combining summaries into final commit message."""
-
-        # Determine the output format based on Jira ticket
         if jira_ticket:
+            time_log = f" #time {work_hours}" if work_hours else ""
             format_instructions = f"""
 Generate the commit message in this **exact format**:
-{jira_ticket} <summary>""" + (f" #time {work_hours}" if work_hours else "") + """
+{jira_ticket} <summary>{time_log}
 - feat: detailed description of new features
 - fix: detailed description of bug fixes
 - docs: detailed description of documentation changes
@@ -592,8 +375,6 @@ Part summaries:
 
 Generate ONLY the commit message in the specified format, no additional text or explanation."""
 
-
-
     def generate_changelog(
         self,
         commit_messages: list[str],
@@ -601,40 +382,8 @@ Generate ONLY the commit message in the specified format, no additional text or 
     ) -> str:
         """Generate changelog using LangChain."""
         prompt = self._build_changelog_prompt(commit_messages)
-
         try:
             response = self.llm.invoke(prompt, **kwargs)
-
-            if hasattr(response, 'content'):
-                return response.content.strip()
-            elif isinstance(response, str):
-                return response.strip()
-            else:
-                return str(response).strip()
-
+            return self._extract_response_content(response)
         except Exception as e:
-            raise ApiError(f"Failed to generate changelog: {e}")
-
-    def _should_chunk(self, text: str) -> bool:
-        """Determine if text should be chunked based on token count and configuration."""
-        text_tokens = self.token_counter.count_tokens(text)
-        return text_tokens > self.config.llm.chunking_threshold
-
-    def _make_api_call(self, prompt: str, **kwargs) -> str:
-        """Make API call using LangChain's unified interface.
-
-        This method is required by the base LlmProvider class but is handled
-        internally by the LangChain LLM instances in this implementation.
-        """
-        try:
-            response = self.llm.invoke(prompt, **kwargs)
-
-            if hasattr(response, 'content'):
-                return response.content.strip()
-            elif isinstance(response, str):
-                return response.strip()
-            else:
-                return str(response).strip()
-
-        except Exception as e:
-            raise ApiError(f"LangChain API call failed: {e}")
+            raise ApiError(f"Failed to generate changelog: {e}") from e

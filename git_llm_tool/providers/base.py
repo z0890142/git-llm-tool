@@ -186,18 +186,3 @@ Commit messages:
 
 Generate the changelog:"""
 
-    @abstractmethod
-    def _make_api_call(self, prompt: str, **kwargs) -> str:
-        """Make API call to the LLM provider.
-
-        Args:
-            prompt: The prompt to send
-            **kwargs: Provider-specific arguments
-
-        Returns:
-            Generated text response
-
-        Raises:
-            ApiError: If API call fails
-        """
-        pass

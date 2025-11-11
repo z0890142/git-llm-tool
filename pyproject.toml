@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "git-llm-tool"
-version = "0.1.16"
+version = "0.1.19"
 description = "AI-powered git commit message and changelog generator"
 authors = ["skyler-gogolook <skyler.lo@gogolook.com>"]
 readme = "README.md"
@@ -23,7 +23,7 @@ classifiers = [
 packages = [{include = "git_llm_tool"}]
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = "^3.10"
 click = "^8.1.0"
 pyyaml = "^6.0"
 openai = "^1.0.0"
@@ -53,7 +53,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.black]
 line-length = 88
-target-version = ['py312']
+target-version = ['py310']
 
 [tool.isort]
 profile = "black"
