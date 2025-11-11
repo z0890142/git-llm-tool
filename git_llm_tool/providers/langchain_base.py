@@ -289,8 +289,8 @@ class LangChainProvider(LlmProvider):
     ) -> str:
         """Manual map-reduce implementation with parallel processing."""
         try:
-            # Simple decision: use parallel if we have 2-4 chunks
-            use_parallel = 2 <= len(docs) <= self.config.llm._max_parallel_chunks
+            # Improved logic: use parallel if Ollama is enabled OR we have multiple docs
+            use_parallel = (self.ollama_llm is not None) or (len(docs) > 1)
 
             if use_parallel:
                 return self._parallel_map_reduce(docs, jira_ticket, work_hours, **kwargs)
@@ -355,8 +355,13 @@ class LangChainProvider(LlmProvider):
                         print(f"   ❌ Chunk {i+1} failed: {e}")
                     return i, f"Error processing chunk: {str(e)}"
 
-            # Execute parallel processing
-            max_workers = min(self.config.llm.max_parallel_chunks, len(docs))
+            # Execute parallel processing with configurable worker count
+            if self.ollama_llm is not None:
+                # Ollama is local, use configured Ollama concurrency
+                max_workers = min(self.config.llm.ollama_max_parallel_chunks, len(docs))
+            else:
+                # Remote API, use configured remote API concurrency
+                max_workers = min(self.config.llm.max_parallel_chunks, len(docs))
             completed_chunks = 0
 
             with Halo(text=f"🚀 Processing {len(docs)} chunks in parallel (0/{len(docs)} completed)...", spinner="dots") as spinner:

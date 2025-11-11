@@ -25,10 +25,15 @@ class LlmConfig:
     ollama_model: str = "llama3:8b"  # Ollama model for chunk processing
     ollama_base_url: str = "http://localhost:11434"  # Ollama API base URL
 
+    # Parallel processing configuration
+    max_parallel_chunks: int = 4  # Maximum concurrent chunks for remote APIs
+    ollama_max_parallel_chunks: int = 16  # Maximum concurrent chunks for Ollama (local)
+
     # Internal constants (not user-configurable)
     _chunk_size: int = 6000  # Maximum chunk size in characters
     _chunk_overlap: int = 300  # Overlap between chunks to maintain context
-    _max_parallel_chunks: int = 4  # Maximum number of chunks to process in parallel
+    _max_parallel_chunks: int = 4  # Maximum number of chunks to process in parallel (remote APIs)
+    _ollama_max_parallel_chunks: int = 16  # Maximum number of chunks to process in parallel (Ollama local)
     _chunk_processing_timeout: float = 120.0  # Timeout for each chunk processing (seconds)
     _max_retries: int = 5  # Maximum number of retries
     _initial_delay: float = 1.0  # Initial retry delay in seconds
