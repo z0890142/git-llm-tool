@@ -30,7 +30,8 @@ class SmartChunker:
         Strategy:
         1. First try to split by files
         2. If files are too large, split by hunks
-        3. As last resort, use size-based splitting
+        3. If hunks are still too large, apply size-based splitting to oversized hunks
+        4. As last resort, use pure size-based splitting
         """
         chunks = []
 
@@ -51,9 +52,22 @@ class SmartChunker:
                 # File is too large, try to split by hunks
                 hunk_chunks = self._split_file_by_hunks(file_content, file_path)
                 if hunk_chunks:
-                    chunks.extend(hunk_chunks)
+                    # Check if any hunk chunks are still too large
+                    final_chunks = []
+                    for hunk_chunk in hunk_chunks:
+                        if len(hunk_chunk.content) <= self.chunk_size:
+                            # Hunk chunk is reasonable size
+                            final_chunks.append(hunk_chunk)
+                        else:
+                            # Hunk chunk is still too large, apply size-based splitting
+                            oversized_chunks = self._split_by_size(hunk_chunk.content, file_path)
+                            # Update chunk types to indicate mixed strategy
+                            for chunk in oversized_chunks:
+                                chunk.chunk_type = 'hunk-size-based'
+                            final_chunks.extend(oversized_chunks)
+                    chunks.extend(final_chunks)
                 else:
-                    # Fallback to size-based splitting
+                    # Fallback to pure size-based splitting
                     size_chunks = self._split_by_size(file_content, file_path)
                     chunks.extend(size_chunks)
 
@@ -94,15 +108,18 @@ class SmartChunker:
         # Keep file header
         header_lines = []
         content_start = 0
+        found_hunk = False
 
         for i, line in enumerate(lines):
             if line.startswith('@@'):
                 content_start = i
+                found_hunk = True
                 break
             header_lines.append(line)
 
-        if not header_lines:
-            return []  # No proper file structure
+        # Check if we found any hunks - this is the key fix
+        if not found_hunk:
+            return []  # No hunk markers found, not a proper git diff format
 
         header = '\n'.join(header_lines)
 
@@ -231,6 +248,7 @@ class SmartChunker:
         file_chunks = len([c for c in chunks if c.chunk_type == 'file'])
         hunk_chunks = len([c for c in chunks if c.chunk_type == 'hunk'])
         size_chunks = len([c for c in chunks if c.chunk_type == 'size-based'])
+        mixed_chunks = len([c for c in chunks if c.chunk_type == 'hunk-size-based'])
 
         return {
             'total_chunks': len(chunks),
@@ -238,6 +256,7 @@ class SmartChunker:
             'file_chunks': file_chunks,
             'hunk_chunks': hunk_chunks,
             'size_based_chunks': size_chunks,
+            'mixed_hunk_size_chunks': mixed_chunks,
             'average_chunk_size': total_size // len(chunks) if chunks else 0,
             'complete_files': len([c for c in chunks if c.is_complete_file])
         }

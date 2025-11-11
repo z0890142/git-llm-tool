@@ -577,11 +577,9 @@ Generate ONLY the commit message in the specified format, no additional text or 
             raise ApiError(f"Failed to generate changelog: {e}")
 
     def _should_chunk(self, text: str) -> bool:
-        """Determine if text should be chunked based on size and configuration."""
-        return (
-            self.config.llm.enable_chunking and
-            len(text) > self.config.llm.chunking_threshold
-        )
+        """Determine if text should be chunked based on token count and configuration."""
+        text_tokens = self.token_counter.count_tokens(text)
+        return text_tokens > self.config.llm.chunking_threshold
 
     def _make_api_call(self, prompt: str, **kwargs) -> str:
         """Make API call using LangChain's unified interface.
