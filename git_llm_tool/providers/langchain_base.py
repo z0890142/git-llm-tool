@@ -364,7 +364,7 @@ class LangChainProvider(LlmProvider):
                 max_workers = min(self.config.llm.max_parallel_chunks, len(docs))
             completed_chunks = 0
 
-            with Halo(text=f"🚀 Processing {len(docs)} chunks in parallel (0/{len(docs)} completed)...", spinner="dots") as spinner:
+            with Halo(text=f"🚀 Starting {max_workers} parallel workers for {len(docs)} chunks...", spinner="dots") as spinner:
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     # Submit all tasks
                     future_to_index = {
@@ -379,8 +379,9 @@ class LangChainProvider(LlmProvider):
                             summaries[index] = summary
                             completed_chunks += 1
 
-                            # Update spinner text with progress
-                            spinner.text = f"🚀 Processing {len(docs)} chunks in parallel ({completed_chunks}/{len(docs)} completed)..."
+                            # Update spinner text with progress - show parallel workers in action
+                            progress_percent = (completed_chunks / len(docs)) * 100
+                            spinner.text = f"🚀 Parallel processing: {completed_chunks}/{len(docs)} chunks completed ({progress_percent:.1f}%) [{max_workers} workers]"
 
                             if verbose and not summary.startswith("Error"):
                                 spinner.text += f" ✅ Chunk {index+1}"
@@ -391,12 +392,13 @@ class LangChainProvider(LlmProvider):
                             summaries[index] = f"Chunk processing failed: {str(e)}"
                             completed_chunks += 1
 
-                            spinner.text = f"🚀 Processing {len(docs)} chunks in parallel ({completed_chunks}/{len(docs)} completed)..."
+                            progress_percent = (completed_chunks / len(docs)) * 100
+                            spinner.text = f"🚀 Parallel processing: {completed_chunks}/{len(docs)} chunks completed ({progress_percent:.1f}%) [{max_workers} workers]"
                             if verbose:
                                 spinner.text += f" ❌ Chunk {index+1} failed"
 
                 successful_chunks = len([s for s in summaries if not s.startswith("Error") and not s.startswith("Chunk processing failed")])
-                spinner.succeed(f"✅ Parallel processing completed: {successful_chunks}/{len(docs)} chunks successful")
+                spinner.succeed(f"✅ Parallel processing completed with {max_workers} workers: {successful_chunks}/{len(docs)} chunks successful")
 
             # Reduce phase: Combine summaries into final commit message
             with Halo(text=f"🔄 Combining {len(summaries)} summaries into final commit message...", spinner="dots") as spinner:
