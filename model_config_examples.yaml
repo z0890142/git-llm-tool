@@ -1,0 +1,97 @@
+# 針對不同 Ollama 模型的建議配置範例
+#
+# 使用方法：複製對應模型的配置到你的 .git-llm-tool.yaml 文件中
+#
+# 注意：現在所有 chunk_size 和 chunk_overlap 都使用 token 數量而非字元數
+
+# ==================================================
+# phi3:mini (4096 tokens context window)
+# ==================================================
+phi3_mini_config:
+  llm:
+    use_ollama_for_chunks: true
+    ollama_model: "phi3:mini"
+    ollama_base_url: "http://localhost:11434"
+
+    # 針對 4096 token 限制優化
+    chunk_size: 2048               # 每 chunk 最大 2048 tokens（安全範圍）
+    chunk_overlap: 100             # 重疊 100 tokens（節省空間）
+    chunking_threshold: 3000       # 較低的閾值，更早觸發分塊
+
+    # 保守的併發設定
+    max_parallel_chunks: 4
+    ollama_max_parallel_chunks: 4  # phi3:mini 較小，適合保守設定
+
+# ==================================================
+# llama3:8b (8192 tokens context window)
+# ==================================================
+llama3_8b_config:
+  llm:
+    use_ollama_for_chunks: true
+    ollama_model: "llama3:8b"
+    ollama_base_url: "http://localhost:11434"
+
+    # 針對 8192 token 限制優化
+    chunk_size: 4096               # 每 chunk 最大 4096 tokens（8192 的一半）
+    chunk_overlap: 200             # 重疊 200 tokens
+    chunking_threshold: 6000       # 適中的閾值
+
+    # 適中的併發設定
+    max_parallel_chunks: 4
+    ollama_max_parallel_chunks: 8
+
+# ==================================================
+# codellama:13b (16384 tokens context window)
+# ==================================================
+codellama_13b_config:
+  llm:
+    use_ollama_for_chunks: true
+    ollama_model: "codellama:13b"
+    ollama_base_url: "http://localhost:11434"
+
+    # 針對 16384 token 限制優化
+    chunk_size: 8192               # 每 chunk 最大 8192 tokens（16384 的一半）
+    chunk_overlap: 400             # 重疊 400 tokens，保持上下文
+    chunking_threshold: 10000      # 較高的閾值
+
+    # 較積極的併發設定（如果硬體支援）
+    max_parallel_chunks: 4
+    ollama_max_parallel_chunks: 6
+
+# ==================================================
+# 遠端 API (如 GPT-4, Claude)
+# ==================================================
+remote_api_config:
+  llm:
+    use_ollama_for_chunks: false   # 不使用 Ollama
+
+    # 針對大模型優化
+    chunk_size: 3000               # 每 chunk 最大 3000 tokens（保守設定）
+    chunk_overlap: 150             # 重疊 150 tokens
+    chunking_threshold: 12000      # 較高的閾值
+
+    # 保守的併發設定（避免 rate limiting）
+    max_parallel_chunks: 4
+    ollama_max_parallel_chunks: 16 # 不會使用，但需要設定
+
+# ==================================================
+# Token-based Chunking 參考
+# ==================================================
+#
+# 重要改變：現在直接使用 token 數量而非字元數！
+#
+# 安全設定原則：
+# - chunk_size 應該是模型 context window 的 50% 左右
+# - 留足夠空間給 system prompt、user prompt 和 AI 回應
+# - overlap 設定為 chunk_size 的 5-10%
+#
+# 各模型建議設定：
+# - phi3:mini (4096 tokens) → chunk_size: 2048 tokens, overlap: 100 tokens
+# - llama3:8b (8192 tokens) → chunk_size: 4096 tokens, overlap: 200 tokens
+# - codellama:13b (16384 tokens) → chunk_size: 8192 tokens, overlap: 400 tokens
+# - GPT-4/Claude (128k+ tokens) → chunk_size: 3000 tokens, overlap: 150 tokens
+#
+# 優點：
+# ✅ 精確控制每個 chunk 的 token 數量
+# ✅ 避免超過模型的 context window 限制
+# ✅ 減少 "卡住" 和處理失敗的情況

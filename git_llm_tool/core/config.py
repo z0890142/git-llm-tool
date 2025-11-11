@@ -21,19 +21,23 @@ class LlmConfig:
     chunking_threshold: int = 12000  # Token threshold to trigger chunking + parallel processing
 
     # Ollama configuration for hybrid processing
-    use_ollama_for_chunks: bool = False  # Use Ollama for chunk processing (map phase)
-    ollama_model: str = "llama3:8b"  # Ollama model for chunk processing
+    use_ollama_for_chunks: bool = True  # Use Ollama for chunk processing (map phase)
+    ollama_model: str = "phi3:mini"  # Ollama model for chunk processing
     ollama_base_url: str = "http://localhost:11434"  # Ollama API base URL
 
     # Parallel processing configuration
     max_parallel_chunks: int = 4  # Maximum concurrent chunks for remote APIs
     ollama_max_parallel_chunks: int = 16  # Maximum concurrent chunks for Ollama (local)
 
+    # Chunking configuration
+    chunk_size: int = 2048  # Maximum chunk size in tokens
+    chunk_overlap: int = 150  # Overlap between chunks in tokens
+
     # Internal constants (not user-configurable)
-    _chunk_size: int = 6000  # Maximum chunk size in characters
+    _chunk_size: int = 2048  # Maximum chunk size in characters
     _chunk_overlap: int = 300  # Overlap between chunks to maintain context
     _max_parallel_chunks: int = 4  # Maximum number of chunks to process in parallel (remote APIs)
-    _ollama_max_parallel_chunks: int = 16  # Maximum number of chunks to process in parallel (Ollama local)
+    _ollama_max_parallel_chunks: int = 4  # Maximum number of chunks to process in parallel (Ollama local)
     _chunk_processing_timeout: float = 120.0  # Timeout for each chunk processing (seconds)
     _max_retries: int = 5  # Maximum number of retries
     _initial_delay: float = 1.0  # Initial retry delay in seconds
@@ -184,9 +188,15 @@ class ConfigLoader:
             # Processing settings
             chunking_threshold=llm_data.get("chunking_threshold", 12000),
             # Ollama settings
-            use_ollama_for_chunks=llm_data.get("use_ollama_for_chunks", False),
-            ollama_model=llm_data.get("ollama_model", "llama3:8b"),
-            ollama_base_url=llm_data.get("ollama_base_url", "http://localhost:11434")
+            use_ollama_for_chunks=llm_data.get("use_ollama_for_chunks", True),
+            ollama_model=llm_data.get("ollama_model", "phi3:mini"),
+            ollama_base_url=llm_data.get("ollama_base_url", "http://localhost:11434"),
+            # Parallel processing settings
+            max_parallel_chunks=llm_data.get("max_parallel_chunks", 4),
+            ollama_max_parallel_chunks=llm_data.get("ollama_max_parallel_chunks", 16),
+            # Chunking settings
+            chunk_size=llm_data.get("chunk_size", 6000),
+            chunk_overlap=llm_data.get("chunk_overlap", 300)
         )
 
         # Create Jira config

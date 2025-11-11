@@ -48,7 +48,11 @@ class LangChainProvider(LlmProvider):
                 self.ollama_llm = OllamaLLM(
                     model=config.llm.ollama_model,
                     base_url=config.llm.ollama_base_url,
-                    temperature=0.1
+                    temperature=0.1,
+                    top_p=0.9,
+                    top_k=40,
+                    num_predict=100,  # Limit response length
+                    timeout=30.0  # 30 second timeout per request
                 )
             except Exception as e:
                 # If Ollama is not available, fall back to main LLM
@@ -75,14 +79,15 @@ class LangChainProvider(LlmProvider):
 
         # Always initialize smart chunker (will be used based on threshold)
         self.smart_chunker = SmartChunker(
-            chunk_size=config.llm._chunk_size,
-            chunk_overlap=config.llm._chunk_overlap
+            chunk_size=config.llm.chunk_size,
+            chunk_overlap=config.llm.chunk_overlap,
+            model_name=config.llm.default_model
         )
 
         # Keep fallback text splitter for edge cases
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=config.llm._chunk_size,
-            chunk_overlap=config.llm._chunk_overlap,
+            chunk_size=config.llm.chunk_size,
+            chunk_overlap=config.llm.chunk_overlap,
             separators=[
                 "\n\ndiff --git",  # Git diff file separators
                 "\n@@",           # Git diff hunk separators
@@ -289,7 +294,7 @@ class LangChainProvider(LlmProvider):
     ) -> str:
         """Manual map-reduce implementation with parallel processing."""
         try:
-            # Improved logic: use parallel if Ollama is enabled OR we have multiple docs
+            # Improved parallel processing with timeout handling and fallback
             use_parallel = (self.ollama_llm is not None) or (len(docs) > 1)
 
             if use_parallel:
@@ -372,30 +377,56 @@ class LangChainProvider(LlmProvider):
                         for i, doc in enumerate(docs)
                     }
 
-                    # Collect results as they complete
-                    for future in as_completed(future_to_index, timeout=self.config.llm.chunk_processing_timeout):
-                        try:
-                            index, summary = future.result()
-                            summaries[index] = summary
-                            completed_chunks += 1
+                    # Collect results as they complete with reasonable timeout
+                    # Use per-chunk timeout plus some buffer, not total timeout
+                    reasonable_timeout = min(600, self.config.llm.chunk_processing_timeout * 3)  # Max 10 minutes or 3x per-chunk timeout
 
-                            # Update spinner text with progress - show parallel workers in action
-                            progress_percent = (completed_chunks / len(docs)) * 100
-                            spinner.text = f"🚀 Parallel processing: {completed_chunks}/{len(docs)} chunks completed ({progress_percent:.1f}%) [{max_workers} workers]"
+                    try:
+                        for future in as_completed(future_to_index, timeout=reasonable_timeout):
+                            try:
+                                index, summary = future.result(timeout=30)  # Individual result timeout
+                                summaries[index] = summary
+                                completed_chunks += 1
 
-                            if verbose and not summary.startswith("Error"):
-                                spinner.text += f" ✅ Chunk {index+1}"
+                                # Update spinner text with progress - show parallel workers in action
+                                progress_percent = (completed_chunks / len(docs)) * 100
+                                spinner.text = f"🚀 Parallel processing: {completed_chunks}/{len(docs)} chunks completed ({progress_percent:.1f}%) [{max_workers} workers]"
 
-                        except Exception as e:
-                            # Handle individual chunk failures
-                            index = future_to_index[future]
-                            summaries[index] = f"Chunk processing failed: {str(e)}"
-                            completed_chunks += 1
+                                if verbose and not summary.startswith("Error"):
+                                    spinner.text += f" ✅ Chunk {index+1}"
 
-                            progress_percent = (completed_chunks / len(docs)) * 100
-                            spinner.text = f"🚀 Parallel processing: {completed_chunks}/{len(docs)} chunks completed ({progress_percent:.1f}%) [{max_workers} workers]"
-                            if verbose:
-                                spinner.text += f" ❌ Chunk {index+1} failed"
+                            except Exception as e:
+                                # Handle individual chunk failures
+                                index = future_to_index[future]
+                                summaries[index] = f"Chunk processing failed: {str(e)}"
+                                completed_chunks += 1
+
+                                progress_percent = (completed_chunks / len(docs)) * 100
+                                spinner.text = f"🚀 Parallel processing: {completed_chunks}/{len(docs)} chunks completed ({progress_percent:.1f}%) [{max_workers} workers]"
+                                if verbose:
+                                    spinner.text += f" ❌ Chunk {index+1} failed"
+
+                    except Exception as timeout_error:
+                        # Handle global timeout or other as_completed errors
+                        spinner.text = f"⚠️ Parallel processing timeout after {reasonable_timeout}s, collecting partial results..."
+
+                        # Collect any completed futures
+                        for future in future_to_index:
+                            if future.done():
+                                try:
+                                    index, summary = future.result(timeout=1)
+                                    summaries[index] = summary
+                                    completed_chunks += 1
+                                except:
+                                    index = future_to_index[future]
+                                    summaries[index] = f"Timeout or error processing chunk"
+                                    completed_chunks += 1
+                            else:
+                                # Cancel remaining futures
+                                future.cancel()
+                                index = future_to_index[future]
+                                summaries[index] = f"Cancelled due to timeout"
+                                completed_chunks += 1
 
                 successful_chunks = len([s for s in summaries if not s.startswith("Error") and not s.startswith("Chunk processing failed")])
                 spinner.succeed(f"✅ Parallel processing completed with {max_workers} workers: {successful_chunks}/{len(docs)} chunks successful")
@@ -426,7 +457,8 @@ class LangChainProvider(LlmProvider):
 
         except Exception as e:
             if kwargs.get("verbose", False):
-                print(f"❌ Parallel processing failed, falling back to sequential: {e}")
+                print(f"❌ Parallel processing failed ({type(e).__name__}: {e}), falling back to sequential...")
+            # Clear any partial results and use sequential fallback
             return self._sequential_map_reduce(docs, jira_ticket, work_hours, **kwargs)
 
     def _sequential_map_reduce(
